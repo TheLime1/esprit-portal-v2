@@ -3,7 +3,7 @@
 The modern, responsive web interface. Built for speed and visual clarity.
 
 ## 🛠 Tech Stack
-* **Framework:** Next.js 14 (App Router)
+* **Framework:** Next.js (App Router)
 * **Styling:** Tailwind CSS + Shadcn/UI
 * **Icons:** Lucide React
 * **Backend:** Supabase (for real-time data syncing)
