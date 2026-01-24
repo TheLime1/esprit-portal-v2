@@ -1,0 +1,99 @@
+console.log("Esprit Portal Extension - Background Ready")
+
+interface LoginCredentials {
+  id: string
+  password: string
+}
+
+// Handle messages from the website
+chrome.runtime.onMessageExternal.addListener(
+  (request, sender, sendResponse) => {
+    console.log("Message received from website:", request)
+    
+    if (request.action === "LOGIN") {
+      // Forward to content script which can handle the esprit-ts library
+      handleLoginViaContentScript(request.credentials)
+        .then(result => sendResponse({ success: true, data: result }))
+        .catch(error => sendResponse({ success: false, error: error.message }))
+      return true
+    }
+    
+    return false
+  }
+)
+
+async function handleLoginViaContentScript(credentials: LoginCredentials) {
+  try {
+    console.log("Creating tab for login...")
+    
+    // Create a hidden tab to run the login logic
+    const tab = await chrome.tabs.create({
+      url: "https://esprit.tn",
+      active: false
+    })
+    
+    if (!tab.id) throw new Error("Failed to create tab")
+    
+    // Wait for tab to load
+    await new Promise(resolve => {
+      chrome.tabs.onUpdated.addListener(function listener(tabId, info) {
+        if (tabId === tab.id && info.status === 'complete') {
+          chrome.tabs.onUpdated.removeListener(listener)
+          resolve(null)
+        }
+      })
+    })
+    
+    // Inject and execute the login script
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: performLogin,
+      args: [credentials]
+    })
+    
+    // Close the tab
+    await chrome.tabs.remove(tab.id)
+    
+    if (result.result) {
+      // Store in local storage
+      await chrome.storage.local.set({ studentData: result.result })
+      console.log("Data saved to local storage")
+      return result.result
+    } else {
+      throw new Error("Login failed")
+    }
+  } catch (error) {
+    console.error("Login error:", error)
+    throw error
+  }
+}
+
+// This function will be injected into the page
+async function performLogin(credentials: { id: string; password: string }) {
+  try {
+    // Import esprit-ts dynamically in the page context
+    const module = await import("https://cdn.jsdelivr.net/npm/@lime1/esprit-ts@latest/+esm")
+    const { Esprit } = module
+    
+    const api = new Esprit()
+    await api.login(credentials.id, credentials.password)
+    
+    const [grades, profile] = await Promise.all([
+      api.getGrades(),
+      api.getProfile()
+    ])
+    
+    return {
+      id: credentials.id,
+      profile,
+      grades,
+      lastFetched: new Date().toISOString()
+    }
+  } catch (error: any) {
+    throw new Error(error.message || "Login failed")
+  }
+}
+
+chrome.action.onClicked.addListener(() => {
+  console.log("Extension clicked")
+})
