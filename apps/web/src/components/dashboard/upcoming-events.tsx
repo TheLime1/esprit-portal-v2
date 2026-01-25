@@ -1,7 +1,9 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ChevronRight, Megaphone } from "lucide-react";
+import { ChevronRight, Megaphone, Loader2, Briefcase } from "lucide-react";
+import Link from "next/link";
 
 interface Event {
     id: string;
@@ -11,6 +13,13 @@ interface Event {
     time: string;
     location: string;
     colorClass: string;
+}
+
+interface Internship {
+    id: string;
+    title: string;
+    company: string;
+    link: string;
 }
 
 const events: Event[] = [
@@ -35,6 +44,35 @@ const events: Event[] = [
 ];
 
 export function UpcomingEvents() {
+    const [latestInternship, setLatestInternship] = useState<Internship | null>(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        const fetchLatestInternship = async () => {
+            try {
+                const response = await fetch('/api/internships');
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.success && data.items && data.items.length > 0) {
+                        const first = data.items[0];
+                        setLatestInternship({
+                            id: first.id,
+                            title: first.title,
+                            company: first.company,
+                            link: first.link,
+                        });
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to fetch latest internship:', err);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchLatestInternship();
+    }, []);
+
     return (
         <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-4">
@@ -55,20 +93,36 @@ export function UpcomingEvents() {
 
                 {/* Internship Banner */}
                 <div className="mt-5 pt-4 border-t border-border">
-                    <div className="flex items-center gap-3 p-3 bg-gradient-to-r from-orange-50 to-orange-100 dark:from-orange-900/20 dark:to-orange-800/20 rounded-lg border border-orange-100 dark:border-orange-800/30 cursor-pointer hover:shadow-sm transition-shadow">
-                        <div className="bg-card p-1.5 rounded-full shadow-sm">
-                            <Megaphone className="h-4 w-4 text-orange-500" />
+                    <Link href="/dashboard/internships">
+                        <div className="flex items-center gap-3 p-3 bg-gradient-to-r from-orange-50 to-orange-100 dark:from-orange-900/20 dark:to-orange-800/20 rounded-lg border border-orange-100 dark:border-orange-800/30 cursor-pointer hover:shadow-md transition-all hover:scale-[1.02]">
+                            <div className="bg-card p-1.5 rounded-full shadow-sm">
+                                {loading ? (
+                                    <Loader2 className="h-4 w-4 text-orange-500 animate-spin" />
+                                ) : (
+                                    <Briefcase className="h-4 w-4 text-orange-500" />
+                                )}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <p className="text-xs font-bold text-foreground">
+                                    New Internship Posted
+                                </p>
+                                {loading ? (
+                                    <p className="text-[10px] text-muted-foreground">
+                                        Loading...
+                                    </p>
+                                ) : latestInternship ? (
+                                    <p className="text-[10px] text-muted-foreground truncate">
+                                        {latestInternship.title} @ {latestInternship.company}
+                                    </p>
+                                ) : (
+                                    <p className="text-[10px] text-muted-foreground">
+                                        Browse opportunities
+                                    </p>
+                                )}
+                            </div>
+                            <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
                         </div>
-                        <div className="flex-1 min-w-0">
-                            <p className="text-xs font-bold text-foreground">
-                                New Internship Posted
-                            </p>
-                            <p className="text-[10px] text-muted-foreground truncate">
-                                Software Intern @ TechCorp
-                            </p>
-                        </div>
-                        <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                    </div>
+                    </Link>
                 </div>
             </CardContent>
         </Card>

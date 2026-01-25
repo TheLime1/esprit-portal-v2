@@ -147,7 +147,7 @@ export default function LoginPage() {
         <CardHeader className="text-center space-y-4">
           <div className="flex justify-center">
             <Image
-              src="/logo_square.svg"
+              src="/logo_school.png"
               alt="Esprit Portal Logo"
               width={80}
               height={80}
