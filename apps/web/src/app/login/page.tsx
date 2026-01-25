@@ -18,8 +18,33 @@ export default function LoginPage() {
     setResult(null);
 
     try {
-      // Check if extension is installed
-      const extensionId = "YOUR_EXTENSION_ID"; // Will be replaced after building the extension
+      // Get extension ID from environment or localStorage
+      let extensionId = process.env.NEXT_PUBLIC_EXTENSION_ID;
+      
+      if (typeof window !== "undefined") {
+        extensionId = extensionId || localStorage.getItem("extensionId");
+      }
+      
+      // If no extension ID is set, prompt the user
+      if (!extensionId || extensionId === "YOUR_EXTENSION_ID") {
+        const userInput = prompt(
+          "Please enter your Extension ID:\n\n" +
+          "1. Go to chrome://extensions\n" +
+          "2. Enable Developer Mode\n" +
+          "3. Find 'Esprit Extension'\n" +
+          "4. Copy the ID (under the extension name)\n\n" +
+          "Extension ID:"
+        );
+        
+        if (!userInput) {
+          setError("Extension ID is required");
+          setLoading(false);
+          return;
+        }
+        
+        extensionId = userInput;
+        localStorage.setItem("extensionId", extensionId);
+      }
 
       // Send message to extension
       if (typeof chrome !== "undefined" && chrome.runtime) {
@@ -35,8 +60,11 @@ export default function LoginPage() {
           (response) => {
             if (chrome.runtime.lastError) {
               setError(
-                "Extension not found. Please install the Esprit Portal extension.",
+                "Extension not found. Please install the Esprit Portal extension.\n" +
+                "Error: " + chrome.runtime.lastError.message
               );
+              // Clear invalid extension ID
+              localStorage.removeItem("extensionId");
               setLoading(false);
               return;
             }
