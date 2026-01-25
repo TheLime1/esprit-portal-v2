@@ -20,28 +20,28 @@ export default function LoginPage() {
     try {
       // Get extension ID from environment or localStorage
       let extensionId = process.env.NEXT_PUBLIC_EXTENSION_ID;
-      
+
       if (typeof window !== "undefined") {
         extensionId = extensionId || localStorage.getItem("extensionId");
       }
-      
+
       // If no extension ID is set, prompt the user
       if (!extensionId || extensionId === "YOUR_EXTENSION_ID") {
         const userInput = prompt(
           "Please enter your Extension ID:\n\n" +
-          "1. Go to chrome://extensions\n" +
-          "2. Enable Developer Mode\n" +
-          "3. Find 'Esprit Extension'\n" +
-          "4. Copy the ID (under the extension name)\n\n" +
-          "Extension ID:"
+            "1. Go to chrome://extensions\n" +
+            "2. Enable Developer Mode\n" +
+            "3. Find 'Esprit Extension'\n" +
+            "4. Copy the ID (under the extension name)\n\n" +
+            "Extension ID:",
         );
-        
+
         if (!userInput) {
           setError("Extension ID is required");
           setLoading(false);
           return;
         }
-        
+
         extensionId = userInput;
         localStorage.setItem("extensionId", extensionId);
       }
@@ -61,7 +61,8 @@ export default function LoginPage() {
             if (chrome.runtime.lastError) {
               setError(
                 "Extension not found. Please install the Esprit Portal extension.\n" +
-                "Error: " + chrome.runtime.lastError.message
+                  "Error: " +
+                  chrome.runtime.lastError.message,
               );
               // Clear invalid extension ID
               localStorage.removeItem("extensionId");
@@ -72,6 +73,45 @@ export default function LoginPage() {
             if (response.success) {
               setResult(response.data);
               setError(null);
+
+              // Store data in localStorage for dashboard pages
+              if (response.data) {
+                // Store student data
+                localStorage.setItem(
+                  "esprit_user",
+                  JSON.stringify({
+                    id: response.data.id,
+                    name: response.data.name,
+                    className: response.data.className,
+                  }),
+                );
+
+                // Store grades
+                if (response.data.allGrades) {
+                  localStorage.setItem(
+                    "esprit_grades",
+                    JSON.stringify(response.data.allGrades),
+                  );
+                }
+
+                // Store credits
+                if (response.data.credits) {
+                  localStorage.setItem(
+                    "esprit_credits",
+                    JSON.stringify(response.data.credits),
+                  );
+                  console.log(
+                    "Credits saved to localStorage:",
+                    response.data.credits,
+                  );
+                }
+
+                // Store full student data
+                localStorage.setItem(
+                  "esprit_student_data",
+                  JSON.stringify(response.data),
+                );
+              }
             } else {
               setError(response.error || "Login failed");
             }

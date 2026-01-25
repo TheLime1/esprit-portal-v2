@@ -2,150 +2,162 @@
 
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ChevronRight, Megaphone, Loader2, Briefcase } from "lucide-react";
+import {
+  Loader2,
+  Briefcase,
+  ExternalLink,
+  MapPin,
+  Calendar,
+  Clock,
+} from "lucide-react";
 import Link from "next/link";
-
-interface Event {
-    id: string;
-    month: string;
-    day: string;
-    title: string;
-    time: string;
-    location: string;
-    colorClass: string;
-}
+import { Badge } from "@/components/ui/badge";
 
 interface Internship {
-    id: string;
-    title: string;
-    company: string;
-    link: string;
+  id: string;
+  title: string;
+  company: string;
+  location: string;
+  type: string;
+  closingDate: string;
+  link: string;
+  description: string;
 }
 
-const events: Event[] = [
-    {
-        id: "1",
-        month: "Oct",
-        day: "25",
-        title: "Robotics Club Meetup",
-        time: "5:00 PM",
-        location: "Tech Lab 3",
-        colorClass: "bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border-blue-100 dark:border-blue-800/30",
-    },
-    {
-        id: "2",
-        month: "Oct",
-        day: "28",
-        title: "Career Fair 2023",
-        time: "10:00 AM",
-        location: "Main Hall",
-        colorClass: "bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 border-purple-100 dark:border-purple-800/30",
-    },
-];
+function getTypeColor(type: string): string {
+  switch (type.toLowerCase()) {
+    case "internship":
+      return "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30";
+    case "contract":
+      return "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/30";
+    case "permanent":
+      return "bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/30";
+    default:
+      return "bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/30";
+  }
+}
+
+function isClosingSoon(closingDate: string): boolean {
+  try {
+    const parts = closingDate.split("/");
+    if (parts.length !== 3) return false;
+    const date = new Date(
+      parseInt(parts[2]),
+      parseInt(parts[1]) - 1,
+      parseInt(parts[0]),
+    );
+    const now = new Date();
+    const daysLeft = Math.ceil(
+      (date.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
+    );
+    return daysLeft <= 7 && daysLeft >= 0;
+  } catch {
+    return false;
+  }
+}
 
 export function UpcomingEvents() {
-    const [latestInternship, setLatestInternship] = useState<Internship | null>(null);
-    const [loading, setLoading] = useState(true);
+  const [internships, setInternships] = useState<Internship[]>([]);
+  const [loading, setLoading] = useState(true);
 
-    useEffect(() => {
-        const fetchLatestInternship = async () => {
-            try {
-                const response = await fetch('/api/internships');
-                if (response.ok) {
-                    const data = await response.json();
-                    if (data.success && data.items && data.items.length > 0) {
-                        const first = data.items[0];
-                        setLatestInternship({
-                            id: first.id,
-                            title: first.title,
-                            company: first.company,
-                            link: first.link,
-                        });
-                    }
-                }
-            } catch (err) {
-                console.error('Failed to fetch latest internship:', err);
-            } finally {
-                setLoading(false);
-            }
-        };
+  useEffect(() => {
+    const fetchInternships = async () => {
+      try {
+        const response = await fetch("/api/internships");
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.items && data.items.length > 0) {
+            // Get the latest 3 internships
+            setInternships(data.items.slice(0, 3));
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch internships:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-        fetchLatestInternship();
-    }, []);
+    fetchInternships();
+  }, []);
 
-    return (
-        <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-4">
-                <CardTitle className="text-lg font-bold">Upcoming</CardTitle>
-                <a
-                    href="#"
-                    className="text-xs font-bold text-primary hover:underline"
-                >
-                    See All
-                </a>
-            </CardHeader>
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between pb-4">
+        <CardTitle className="text-lg font-bold flex items-center gap-2">
+          <Briefcase className="h-5 w-5 text-primary" />
+          Latest Opportunities
+        </CardTitle>
+        <Link
+          href="/dashboard/internships"
+          className="text-xs font-bold text-primary hover:underline"
+        >
+          See All
+        </Link>
+      </CardHeader>
 
-            <CardContent className="space-y-4">
-                {/* Event list */}
-                {events.map((event) => (
-                    <EventItem key={event.id} event={event} />
-                ))}
-
-                {/* Internship Banner */}
-                <div className="mt-5 pt-4 border-t border-border">
-                    <Link href="/dashboard/internships">
-                        <div className="flex items-center gap-3 p-3 bg-gradient-to-r from-orange-50 to-orange-100 dark:from-orange-900/20 dark:to-orange-800/20 rounded-lg border border-orange-100 dark:border-orange-800/30 cursor-pointer hover:shadow-md transition-all hover:scale-[1.02]">
-                            <div className="bg-card p-1.5 rounded-full shadow-sm">
-                                {loading ? (
-                                    <Loader2 className="h-4 w-4 text-orange-500 animate-spin" />
-                                ) : (
-                                    <Briefcase className="h-4 w-4 text-orange-500" />
-                                )}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                                <p className="text-xs font-bold text-foreground">
-                                    New Internship Posted
-                                </p>
-                                {loading ? (
-                                    <p className="text-[10px] text-muted-foreground">
-                                        Loading...
-                                    </p>
-                                ) : latestInternship ? (
-                                    <p className="text-[10px] text-muted-foreground truncate">
-                                        {latestInternship.title} @ {latestInternship.company}
-                                    </p>
-                                ) : (
-                                    <p className="text-[10px] text-muted-foreground">
-                                        Browse opportunities
-                                    </p>
-                                )}
-                            </div>
-                            <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                        </div>
-                    </Link>
-                </div>
-            </CardContent>
-        </Card>
-    );
+      <CardContent className="space-y-3">
+        {loading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-6 w-6 animate-spin text-primary" />
+          </div>
+        ) : internships.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground text-sm">
+            No internships available
+          </div>
+        ) : (
+          internships.map((internship) => (
+            <InternshipItem key={internship.id} internship={internship} />
+          ))
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
-function EventItem({ event }: { event: Event }) {
-    return (
-        <div className="flex gap-3 items-start group cursor-pointer">
-            <div
-                className={`${event.colorClass} w-12 h-12 rounded-lg flex flex-col items-center justify-center shrink-0 border`}
-            >
-                <span className="text-[10px] font-bold uppercase">{event.month}</span>
-                <span className="text-lg font-bold leading-none">{event.day}</span>
-            </div>
-            <div>
-                <h4 className="text-sm font-bold text-foreground group-hover:text-primary transition-colors">
-                    {event.title}
-                </h4>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                    {event.time} • {event.location}
-                </p>
-            </div>
+function InternshipItem({ internship }: { internship: Internship }) {
+  const closingSoon = isClosingSoon(internship.closingDate);
+
+  return (
+    <Link href={internship.link} target="_blank" rel="noopener noreferrer">
+      <div className="group p-3 rounded-lg border border-border hover:border-primary/50 hover:shadow-md transition-all cursor-pointer hover:bg-muted/50">
+        <div className="flex items-start justify-between gap-2 mb-2">
+          <h4 className="text-sm font-bold text-foreground group-hover:text-primary transition-colors line-clamp-1">
+            {internship.title}
+          </h4>
+          <ExternalLink className="h-3.5 w-3.5 text-muted-foreground shrink-0 group-hover:text-primary transition-colors" />
         </div>
-    );
+
+        <p className="text-xs font-medium text-foreground/80 mb-2">
+          {internship.company}
+        </p>
+
+        <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+          <div className="flex items-center gap-1">
+            <MapPin className="h-3 w-3" />
+            <span className="truncate">{internship.location}</span>
+          </div>
+          {closingSoon && (
+            <Badge variant="destructive" className="text-[9px] px-1.5 py-0 h-4">
+              <Clock className="h-2.5 w-2.5 mr-1" />
+              Closing Soon
+            </Badge>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2 mt-2">
+          <Badge
+            variant="outline"
+            className={`text-[10px] px-2 py-0 h-5 ${getTypeColor(internship.type)}`}
+          >
+            {internship.type}
+          </Badge>
+          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+            <Calendar className="h-3 w-3" />
+            <span>{internship.closingDate}</span>
+          </div>
+        </div>
+      </div>
+    </Link>
+  );
 }

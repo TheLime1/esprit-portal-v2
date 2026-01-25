@@ -12,20 +12,20 @@ import {
   BookOpen,
   Calendar,
   Users,
-  PartyPopper,
   Briefcase,
   LogOut,
   Moon,
   Sun,
+  Award,
 } from "lucide-react";
 
 const navItems = [
   { icon: LayoutDashboard, label: "Dashboard", href: "/dashboard" },
   { icon: GraduationCap, label: "Grades", href: "/dashboard/grades" },
+  { icon: Award, label: "Credits", href: "/dashboard/credits" },
   { icon: Calendar, label: "Schedule", href: "/dashboard/schedule" },
   { icon: BookOpen, label: "Courses", href: "/dashboard/courses" },
   { icon: Users, label: "Clubs", href: "#" },
-  { icon: PartyPopper, label: "Events", href: "#" },
   { icon: Briefcase, label: "Internships", href: "/dashboard/internships" },
 ];
 

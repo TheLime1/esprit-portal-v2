@@ -50,6 +50,11 @@ interface Grade {
   noteExam: number | null
 }
 
+interface Credit {
+  /** Raw data from each column - keys depend on table headers */
+  [key: string]: string
+}
+
 interface StudentData {
   id: string
   name: string | null
@@ -382,6 +387,107 @@ function parseLanguageLevelsFromHTML(html: string): { francais: string | null; a
   return { francais, anglais }
 }
 
+/**
+ * Parse credits from HTML (based on esprit-ts approach)
+ * Credits are in table #ContentPlaceHolder1_GridView1 with dynamic columns
+ */
+function parseCreditsFromHTML(html: string): Credit[] | null {
+  // Try to find the main credits table
+  let tableMatch = html.match(/<table[^>]*id=["']ContentPlaceHolder1_GridView1["'][^>]*>([\s\S]*?)<\/table>/i)
+
+  // Fallback: search for table with Année or enseignement headers
+  if (!tableMatch) {
+    const tables = html.match(/<table[^>]*>([\s\S]*?)<\/table>/gi) || []
+    for (const tableHtml of tables) {
+      if (tableHtml.includes("Année") || tableHtml.includes("enseignement") || tableHtml.includes("Crédits")) {
+        tableMatch = [tableHtml, tableHtml]
+        break
+      }
+    }
+  }
+
+  if (!tableMatch) {
+    console.log("Credits table not found")
+    return null
+  }
+
+  const tableHtml = tableMatch[1] || tableMatch[0]
+
+  // Extract headers
+  const headerRegex = /<th[^>]*>([\s\S]*?)<\/th>/gi
+  const headers: string[] = []
+  let headerMatch
+  while ((headerMatch = headerRegex.exec(tableHtml)) !== null) {
+    // Decode HTML entities in headers (e.g., &#233; -> é)
+    const headerText = decodeHtmlEntities(headerMatch[1].replace(/<[^>]+>/g, "").trim())
+    headers.push(headerText)
+  }
+
+  if (headers.length === 0) {
+    console.log("No headers found in credits table")
+    return null
+  }
+
+  console.log("Credits table headers:", headers)
+
+  // Extract data rows
+  const credits: Credit[] = []
+  const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi
+  let rowMatch
+  let isFirstRow = true
+
+  while ((rowMatch = rowRegex.exec(tableHtml)) !== null) {
+    // Skip header row
+    if (isFirstRow) {
+      isFirstRow = false
+      continue
+    }
+
+    const rowHtml = rowMatch[1]
+    const cellRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi
+    const cells: string[] = []
+    let cellMatch
+
+    while ((cellMatch = cellRegex.exec(rowHtml)) !== null) {
+      // Decode HTML entities in cell values
+      const cellText = decodeHtmlEntities(cellMatch[1].replace(/<[^>]+>/g, "").trim())
+      cells.push(cellText)
+    }
+
+    if (cells.length > 0) {
+      const credit: Credit = {}
+      headers.forEach((header, index) => {
+        credit[header] = cells[index] ?? ""
+      })
+      credits.push(credit)
+    }
+  }
+
+  console.log("Parsed credits:", credits)
+  return credits.length > 0 ? credits : null
+}
+
+/**
+ * Fetch credits from the portal
+ */
+async function fetchCredits(): Promise<Credit[] | null> {
+  try {
+    console.log("Fetching credits...")
+    const response = await fetch(URLS.CREDITS, { credentials: "include" })
+
+    if (isLoginPage(response.url)) {
+      console.log("Session expired - redirected to login")
+      return null
+    }
+
+    const html = await response.text()
+    return parseCreditsFromHTML(html)
+  } catch (e) {
+    console.error("Failed to fetch credits:", e)
+    return null
+  }
+}
+
 // ============================================================================
 // Fetch All Grades Function
 // ============================================================================
@@ -647,6 +753,11 @@ async function handleLogin(credentials: LoginCredentials): Promise<StudentData> 
     console.log("Fetching all grades...")
     const allGradesData = await fetchAllGrades()
 
+    // Fetch credits data
+    console.log("Fetching credits...")
+    const creditsData = await fetchCredits()
+    console.log("Credits fetched:", creditsData)
+
     const studentData: StudentData = {
       id: credentials.id,
       name: studentInfo.name,
@@ -658,17 +769,19 @@ async function handleLogin(credentials: LoginCredentials): Promise<StudentData> 
     console.log("Data fetched successfully:", studentData)
     console.log("All grades data:", allGradesData)
 
-    // Store in local storage (student data and all grades separately)
+    // Store in local storage (student data, all grades, and credits separately)
     await chrome.storage.local.set({
       studentData,
-      allGrades: allGradesData
+      allGrades: allGradesData,
+      credits: creditsData
     })
-    console.log("Data saved to chrome.storage.local")
+    console.log("Data saved to chrome.storage.local (including credits)")
 
-    // Return both studentData and allGrades so web app can store them
+    // Return studentData, allGrades, and credits so web app can store them
     return {
       ...studentData,
-      allGrades: allGradesData
+      allGrades: allGradesData,
+      credits: creditsData
     }
 
   } catch (error) {
@@ -729,6 +842,22 @@ chrome.runtime.onMessageExternal.addListener(
             safeSendResponse(sendResponse, { success: true, data: result.studentData })
           } else {
             safeSendResponse(sendResponse, { success: false, error: "No student data found. Please login first." })
+          }
+        })
+        .catch(error => safeSendResponse(sendResponse, { success: false, error: error.message }))
+      return true
+    }
+
+    if (request.action === "GET_CREDITS") {
+      // Fetch credits from portal
+      fetchCredits()
+        .then(credits => {
+          if (credits) {
+            // Store in chrome.storage for future use
+            chrome.storage.local.set({ credits })
+            safeSendResponse(sendResponse, { success: true, data: credits })
+          } else {
+            safeSendResponse(sendResponse, { success: false, error: "No credits data found. Make sure you're logged in." })
           }
         })
         .catch(error => safeSendResponse(sendResponse, { success: false, error: error.message }))
