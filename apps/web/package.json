@@ -10,6 +10,11 @@
   },
   "dependencies": {
     "@lime1/esprit-ts": "^1.1.1",
+    "@radix-ui/react-avatar": "^1.1.11",
+    "@radix-ui/react-scroll-area": "^1.2.10",
+    "@radix-ui/react-select": "^2.2.6",
+    "@radix-ui/react-separator": "^1.1.8",
+    "@radix-ui/react-slot": "^1.2.4",
     "@supabase/supabase-js": "^2.91.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

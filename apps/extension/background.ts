@@ -15,7 +15,14 @@ console.log("Esprit Portal Extension - Ready")
 const URLS = {
   LOGIN: "https://esprit-tn.com/esponline/online/default.aspx",
   HOME: "https://esprit-tn.com/esponline/Etudiants/Accueil.aspx",
-  GRADES: "https://esprit-tn.com/ESPOnline/Etudiants/Resultat2021.aspx",
+  // Grade endpoints (matching esprit-ts library)
+  REGULAR_GRADES: "https://esprit-tn.com/ESPOnline/Etudiants/Resultat2021.aspx",
+  PRINCIPAL_RESULT: "https://esprit-tn.com/ESPOnline/Etudiants/ResultatPrincipale2021.aspx",
+  RATTRAPAGE_GRADES: "https://esprit-tn.com/ESPOnline/Etudiants/noterat.aspx",
+  RATTRAPAGE_RESULT: "https://esprit-tn.com/ESPOnline/Etudiants/ResultatRattrapage2021.aspx",
+  LANGUAGE_LEVEL: "https://esprit-tn.com/ESPOnline/Etudiants/LANG2.aspx",
+  RANKING: "https://esprit-tn.com/ESPOnline/Etudiants/ranking.aspx",
+  // Other endpoints
   ABSENCES: "https://esprit-tn.com/ESPOnline/Etudiants/absenceetud.aspx",
   CREDITS: "https://esprit-tn.com/ESPOnline/Etudiants/Historique_Cr%C3%A9dit.aspx",
   SCHEDULES: "https://esprit-tn.com/ESPOnline/Etudiants/Emplois.aspx",
@@ -83,6 +90,22 @@ function decodeHtmlEntities(text: string): string {
 }
 
 /**
+ * Clean values that may contain &nbsp; or other empty representations
+ * Returns null if the value is essentially empty
+ */
+function cleanEmptyValue(value: string | null | undefined): string | null {
+  if (!value) return null
+
+  // Decode HTML entities first
+  const decoded = decodeHtmlEntities(value.trim())
+
+  // Check if it's just whitespace or nbsp after decoding
+  const cleaned = decoded.replace(/\u00A0/g, '').trim() // \u00A0 is the actual non-breaking space character
+
+  return cleaned === '' ? null : decoded
+}
+
+/**
  * Extract ASP.NET hidden form fields from HTML using regex
  */
 function extractASPNetFormData(html: string): ASPNetFormData {
@@ -133,7 +156,12 @@ function findCheckboxName(html: string): string {
  */
 function parseEuropeanNumber(value: string | undefined): number | null {
   if (!value || value.trim() === "") return null
-  const normalized = value.trim().replace(",", ".")
+
+  // Clean &nbsp; and other empty values first
+  const cleaned = cleanEmptyValue(value)
+  if (!cleaned) return null
+
+  const normalized = cleaned.replace(",", ".")
   const parsed = parseFloat(normalized)
   return isNaN(parsed) ? null : parsed
 }
@@ -235,6 +263,213 @@ function parseStudentInfoFromHTML(html: string): { name: string | null; classNam
   className = extractTextById(html, "Label3") || extractTextById(html, "ContentPlaceHolder1_Label3")
 
   return { name, className }
+}
+
+/**
+ * Parse principal/rattrapage result from HTML (similar to esprit-ts approach)
+ * The data is in table #ContentPlaceHolder1_GridView3 with moyenne and decision columns
+ */
+function parseResultFromHTML(html: string): { moyenneGeneral: string | null; decision: string | null } {
+  let moyenneGeneral: string | null = null
+  let decision: string | null = null
+
+  // Try to find the result table #ContentPlaceHolder1_GridView3
+  const tableMatch = html.match(/<table[^>]*id=["']ContentPlaceHolder1_GridView3["'][^>]*>([\s\S]*?)<\/table>/i)
+  if (!tableMatch) {
+    console.log("Result table not found, trying fallback extraction")
+    // Fallback to label extraction
+    moyenneGeneral = cleanEmptyValue(extractTextById(html, "ContentPlaceHolder1_Label1") || extractTextById(html, "Label1"))
+    decision = cleanEmptyValue(extractTextById(html, "ContentPlaceHolder1_Label2") || extractTextById(html, "Label2"))
+    return { moyenneGeneral, decision }
+  }
+
+  const tableHtml = tableMatch[1]
+
+  // Extract headers
+  const headerRegex = /<th[^>]*>([\s\S]*?)<\/th>/gi
+  const headers: string[] = []
+  let headerMatch
+  while ((headerMatch = headerRegex.exec(tableHtml)) !== null) {
+    headers.push(headerMatch[1].replace(/<[^>]+>/g, '').trim().toLowerCase())
+  }
+
+  // Find column indices
+  const moyenneIdx = headers.findIndex(h => h.includes("moyenne"))
+  const decisionIdx = headers.findIndex(h => h.includes("decision") || h.includes("décision"))
+
+  // Extract first data row
+  const rowMatch = tableHtml.match(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)
+  if (rowMatch && rowMatch.length > 1) {
+    const dataRow = rowMatch[1]
+    const cellRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi
+    const cells: string[] = []
+    let cellMatch
+    while ((cellMatch = cellRegex.exec(dataRow)) !== null) {
+      cells.push(cellMatch[1].replace(/<[^>]+>/g, '').trim())
+    }
+
+    if (moyenneIdx >= 0 && cells[moyenneIdx]) {
+      moyenneGeneral = cleanEmptyValue(cells[moyenneIdx])
+    }
+    if (decisionIdx >= 0 && cells[decisionIdx]) {
+      decision = cleanEmptyValue(cells[decisionIdx])
+    }
+  }
+
+  console.log("Parsed result:", { moyenneGeneral, decision })
+  return { moyenneGeneral, decision }
+}
+
+/**
+ * Parse language levels from HTML (similar to esprit-ts approach)
+ * The data is in a table #ContentPlaceHolder1_GridView2 with columns for francais and anglais
+ */
+function parseLanguageLevelsFromHTML(html: string): { francais: string | null; anglais: string | null } {
+  let francais: string | null = null
+  let anglais: string | null = null
+
+  // Check if page contains expected content
+  if (!html.includes("NIVEAU LANGUES") && !html.includes("niveau langue")) {
+    console.log("Language levels page does not contain expected content")
+    return { francais, anglais }
+  }
+
+  // Try to find the table #ContentPlaceHolder1_GridView2
+  const tableMatch = html.match(/<table[^>]*id=["']ContentPlaceHolder1_GridView2["'][^>]*>([\s\S]*?)<\/table>/i)
+  if (!tableMatch) {
+    console.log("Language levels table not found, trying fallback extraction")
+    // Fallback: try to extract from any table or labels
+    francais = cleanEmptyValue(extractTextById(html, "ContentPlaceHolder1_Label1") || extractTextById(html, "Label1"))
+    anglais = cleanEmptyValue(extractTextById(html, "ContentPlaceHolder1_Label2") || extractTextById(html, "Label2"))
+    return { francais, anglais }
+  }
+
+  const tableHtml = tableMatch[1]
+
+  // Extract headers
+  const headerRegex = /<th[^>]*>([\s\S]*?)<\/th>/gi
+  const headers: string[] = []
+  let headerMatch
+  while ((headerMatch = headerRegex.exec(tableHtml)) !== null) {
+    headers.push(headerMatch[1].replace(/<[^>]+>/g, '').trim().toLowerCase())
+  }
+
+  // Find column indices
+  const francaisIdx = headers.findIndex(h => h.includes("francais") || h.includes("français"))
+  const anglaisIdx = headers.findIndex(h => h.includes("anglais") || h.includes("english"))
+
+  // Extract first data row
+  const rowMatch = tableHtml.match(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)
+  if (rowMatch && rowMatch.length > 1) {
+    // Skip header row (index 0), get first data row
+    const dataRow = rowMatch[1]
+    const cellRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi
+    const cells: string[] = []
+    let cellMatch
+    while ((cellMatch = cellRegex.exec(dataRow)) !== null) {
+      cells.push(cellMatch[1].replace(/<[^>]+>/g, '').trim())
+    }
+
+    if (francaisIdx >= 0 && cells[francaisIdx]) {
+      francais = cleanEmptyValue(cells[francaisIdx])
+    }
+    if (anglaisIdx >= 0 && cells[anglaisIdx]) {
+      anglais = cleanEmptyValue(cells[anglaisIdx])
+    }
+  }
+
+  console.log("Parsed language levels:", { francais, anglais })
+  return { francais, anglais }
+}
+
+// ============================================================================
+// Fetch All Grades Function
+// ============================================================================
+
+interface AllGradesData {
+  regularGrades: Grade[] | null
+  principalResult: { moyenneGeneral: string | null; decision: string | null } | null
+  rattrapageGrades: Grade[] | null
+  rattrapageResult: { moyenneGeneral: string | null; decision: string | null } | null
+  languageLevels: { francais: string | null; anglais: string | null } | null
+  lastFetched: string
+}
+
+async function fetchAllGrades(): Promise<AllGradesData> {
+  const result: AllGradesData = {
+    regularGrades: null,
+    principalResult: null,
+    rattrapageGrades: null,
+    rattrapageResult: null,
+    languageLevels: null,
+    lastFetched: new Date().toISOString()
+  }
+
+  // Fetch Regular Grades
+  try {
+    console.log("Fetching regular grades...")
+    const response = await fetch(URLS.REGULAR_GRADES, { credentials: "include" })
+    if (!isLoginPage(response.url)) {
+      const html = await response.text()
+      if (!html.includes("aucune note!")) {
+        result.regularGrades = parseGradesFromHTML(html)
+      }
+    }
+  } catch (e) {
+    console.warn("Failed to fetch regular grades:", e)
+  }
+
+  // Fetch Principal Result
+  try {
+    console.log("Fetching principal result...")
+    const response = await fetch(URLS.PRINCIPAL_RESULT, { credentials: "include" })
+    if (!isLoginPage(response.url)) {
+      const html = await response.text()
+      result.principalResult = parseResultFromHTML(html)
+    }
+  } catch (e) {
+    console.warn("Failed to fetch principal result:", e)
+  }
+
+  // Fetch Rattrapage Grades
+  try {
+    console.log("Fetching rattrapage grades...")
+    const response = await fetch(URLS.RATTRAPAGE_GRADES, { credentials: "include" })
+    if (!isLoginPage(response.url)) {
+      const html = await response.text()
+      if (!html.includes("aucune note!")) {
+        result.rattrapageGrades = parseGradesFromHTML(html)
+      }
+    }
+  } catch (e) {
+    console.warn("Failed to fetch rattrapage grades:", e)
+  }
+
+  // Fetch Rattrapage Result
+  try {
+    console.log("Fetching rattrapage result...")
+    const response = await fetch(URLS.RATTRAPAGE_RESULT, { credentials: "include" })
+    if (!isLoginPage(response.url)) {
+      const html = await response.text()
+      result.rattrapageResult = parseResultFromHTML(html)
+    }
+  } catch (e) {
+    console.warn("Failed to fetch rattrapage result:", e)
+  }
+
+  // Fetch Language Levels
+  try {
+    console.log("Fetching language levels...")
+    const response = await fetch(URLS.LANGUAGE_LEVEL, { credentials: "include" })
+    if (!isLoginPage(response.url)) {
+      const html = await response.text()
+      result.languageLevels = parseLanguageLevelsFromHTML(html)
+    }
+  } catch (e) {
+    console.warn("Failed to fetch language levels:", e)
+  }
+
+  return result
 }
 
 // ============================================================================
@@ -408,37 +643,33 @@ async function handleLogin(credentials: LoginCredentials): Promise<StudentData> 
 
     const studentInfo = parseStudentInfoFromHTML(homeHtml)
 
-    // Fetch grades
-    console.log("Fetching grades...")
-    let grades: Grade[] | null = null
-
-    try {
-      const gradesResponse = await fetch(URLS.GRADES, { credentials: "include" })
-      if (!isLoginPage(gradesResponse.url)) {
-        const gradesHtml = await gradesResponse.text()
-        if (!gradesHtml.includes("aucune note!")) {
-          grades = parseGradesFromHTML(gradesHtml)
-        }
-      }
-    } catch (e) {
-      console.warn("Failed to fetch grades:", e)
-    }
+    // Fetch all grades data
+    console.log("Fetching all grades...")
+    const allGradesData = await fetchAllGrades()
 
     const studentData: StudentData = {
       id: credentials.id,
       name: studentInfo.name,
       className: studentInfo.className,
-      grades,
+      grades: allGradesData.regularGrades,
       lastFetched: new Date().toISOString(),
     }
 
     console.log("Data fetched successfully:", studentData)
+    console.log("All grades data:", allGradesData)
 
-    // Store in local storage
-    await chrome.storage.local.set({ studentData })
-    console.log("Data saved to local storage")
+    // Store in local storage (student data and all grades separately)
+    await chrome.storage.local.set({
+      studentData,
+      allGrades: allGradesData
+    })
+    console.log("Data saved to chrome.storage.local")
 
-    return studentData
+    // Return both studentData and allGrades so web app can store them
+    return {
+      ...studentData,
+      allGrades: allGradesData
+    }
 
   } catch (error) {
     console.error("Login error:", error)
@@ -450,6 +681,20 @@ async function handleLogin(credentials: LoginCredentials): Promise<StudentData> 
 // Message Handlers
 // ============================================================================
 
+/**
+ * Safe wrapper for sendResponse to handle bfcache port closure
+ * When a page is moved to the back/forward cache, the message port is closed
+ * and sendResponse will fail. This wrapper catches that error gracefully.
+ */
+function safeSendResponse(sendResponse: (response: unknown) => void, response: unknown): void {
+  try {
+    sendResponse(response)
+  } catch (error) {
+    // Port is closed (page moved to bfcache) - this is expected behavior
+    console.log("Message port closed (page likely cached):", error)
+  }
+}
+
 // Handle messages from the website
 chrome.runtime.onMessageExternal.addListener(
   (request, sender, sendResponse) => {
@@ -457,9 +702,37 @@ chrome.runtime.onMessageExternal.addListener(
 
     if (request.action === "LOGIN") {
       handleLogin(request.credentials)
-        .then(result => sendResponse({ success: true, data: result }))
-        .catch(error => sendResponse({ success: false, error: error.message }))
+        .then(result => safeSendResponse(sendResponse, { success: true, data: result }))
+        .catch(error => safeSendResponse(sendResponse, { success: false, error: error.message }))
       return true // Keep the message channel open for async response
+    }
+
+    if (request.action === "GET_GRADES") {
+      // Return stored grades data
+      chrome.storage.local.get(["allGrades", "studentData"])
+        .then(result => {
+          if (result.allGrades) {
+            safeSendResponse(sendResponse, { success: true, data: result.allGrades })
+          } else {
+            safeSendResponse(sendResponse, { success: false, error: "No grades data found. Please login first." })
+          }
+        })
+        .catch(error => safeSendResponse(sendResponse, { success: false, error: error.message }))
+      return true // Keep the message channel open for async response
+    }
+
+    if (request.action === "GET_STUDENT_DATA") {
+      // Return stored student data
+      chrome.storage.local.get(["studentData"])
+        .then(result => {
+          if (result.studentData) {
+            safeSendResponse(sendResponse, { success: true, data: result.studentData })
+          } else {
+            safeSendResponse(sendResponse, { success: false, error: "No student data found. Please login first." })
+          }
+        })
+        .catch(error => safeSendResponse(sendResponse, { success: false, error: error.message }))
+      return true
     }
 
     return false
