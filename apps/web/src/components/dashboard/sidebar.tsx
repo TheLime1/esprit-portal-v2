@@ -5,6 +5,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
+import { useTheme } from "@/components/theme-provider";
 import {
     LayoutDashboard,
     GraduationCap,
@@ -14,6 +15,8 @@ import {
     PartyPopper,
     Briefcase,
     LogOut,
+    Moon,
+    Sun,
 } from "lucide-react";
 
 const navItems = [
@@ -33,6 +36,7 @@ interface SidebarProps {
 
 export function Sidebar({ userName, className }: SidebarProps) {
     const pathname = usePathname();
+    const { theme, toggleTheme } = useTheme();
 
     // Generate initials from user name
     const initials = userName
@@ -115,13 +119,40 @@ export function Sidebar({ userName, className }: SidebarProps) {
                         </p>
                     </div>
                 </div>
-                <button
-                    onClick={handleLogout}
-                    className="w-full flex items-center justify-center gap-2 text-sm font-medium text-muted-foreground hover:text-primary transition-colors py-2"
-                >
-                    <LogOut className="h-4 w-4" />
-                    Log Out
-                </button>
+
+                {/* Theme Toggle & Logout Row */}
+                <div className="flex items-center gap-2">
+                    {/* Theme Toggle Button */}
+                    <button
+                        onClick={toggleTheme}
+                        className="flex-1 flex items-center justify-center gap-2 text-sm font-medium text-muted-foreground hover:text-primary transition-colors py-2 px-3 rounded-lg hover:bg-muted"
+                        title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
+                    >
+                        {theme === "light" ? (
+                            <>
+                                <Moon className="h-4 w-4" />
+                                Dark
+                            </>
+                        ) : (
+                            <>
+                                <Sun className="h-4 w-4" />
+                                Light
+                            </>
+                        )}
+                    </button>
+
+                    {/* Divider */}
+                    <div className="w-px h-6 bg-border" />
+
+                    {/* Logout Button */}
+                    <button
+                        onClick={handleLogout}
+                        className="flex-1 flex items-center justify-center gap-2 text-sm font-medium text-muted-foreground hover:text-destructive transition-colors py-2 px-3 rounded-lg hover:bg-destructive/10"
+                    >
+                        <LogOut className="h-4 w-4" />
+                        Log Out
+                    </button>
+                </div>
             </div>
         </aside>
     );
