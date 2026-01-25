@@ -1,0 +1,334 @@
+import { NextRequest, NextResponse } from "next/server";
+import fs from "node:fs";
+import path from "node:path";
+
+interface TimeSlot {
+    time: string;
+    course: string;
+    room: string;
+}
+
+interface ClassSchedule {
+    days: {
+        [day: string]: TimeSlot[];
+    };
+    metadata?: {
+        year: string;
+        period: string;
+        primary_room: string;
+    };
+}
+
+interface ScheduleData {
+    [className: string]: ClassSchedule;
+}
+
+function parseTimeStr(s: string): number | null {
+    if (!s) return null;
+    const normalized = s.replaceAll("H", ":").trim();
+    const regex = /(\d{1,2}):(\d{2})/;
+    const m = regex.exec(normalized);
+    if (!m) return null;
+    return Number.parseInt(m[1], 10) * 60 + Number.parseInt(m[2], 10);
+}
+
+function eventRangeToMinutes(range: string) {
+    if (!range) return { start: null, end: null };
+    const parts = range.split("-").map((p) => p.trim());
+    if (parts.length === 2) {
+        return { start: parseTimeStr(parts[0]), end: parseTimeStr(parts[1]) };
+    }
+    // fallback: try to pick first two time-like tokens
+    const toks = range.split(/\s+/).filter((t) => /\dH|:\d{2}/.test(t));
+    if (toks.length >= 2)
+        return { start: parseTimeStr(toks[0]), end: parseTimeStr(toks[1]) };
+    return { start: null, end: null };
+}
+
+/**
+ * Remove accents from a string (e.g., "Méca" → "MECA")
+ */
+function removeAccents(str: string): string {
+    return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+/**
+ * Normalize class code for flexible searching.
+ * Handles aliases like "4erp1" or "4bi1" matching "4ERP-BI1"
+ * Also handles accented characters like "4meca" matching "4MécaT1"
+ */
+function findMatchingClassName(searchCode: string, schedules: ScheduleData): string | null {
+    const upperSearch = removeAccents(searchCode.toUpperCase());
+
+    // Direct match first (with accent removal)
+    const directMatch = Object.keys(schedules).find(key => removeAccents(key.toUpperCase()) === upperSearch);
+    if (directMatch) {
+        return directMatch;
+    }
+
+    // Normalize search (remove special chars and accents)
+    const normalizedSearch = upperSearch.replaceAll(/[^A-Z0-9]/g, '');
+
+    // Validate: search must contain at least one digit
+    if (!/\d/.test(normalizedSearch)) {
+        return null;
+    }
+
+    // Try flexible matching for complex class names
+    for (const className of Object.keys(schedules)) {
+        const normalizedClass = removeAccents(className.toUpperCase()).replaceAll(/[^A-Z0-9]/g, '');
+
+        // EXACT normalized match (highest priority)
+        if (normalizedClass === normalizedSearch) {
+            return className;
+        }
+    }
+
+    // Flexible matching for classes with dashes/complex names
+    const searchTrailingNum = normalizedSearch.match(/\d+$/)?.[0];
+
+    if (!searchTrailingNum) {
+        return null;
+    }
+
+    for (const className of Object.keys(schedules)) {
+        const normalizedClass = removeAccents(className.toUpperCase()).replaceAll(/[^A-Z0-9]/g, '');
+
+        // Extract trailing number from class name
+        const classTrailingNum = normalizedClass.match(/\d+$/)?.[0];
+
+        if (!classTrailingNum) {
+            continue;
+        }
+
+        // Numbers must match EXACTLY
+        if (classTrailingNum !== searchTrailingNum) {
+            continue;
+        }
+
+        // Extract the leading digit(s) and middle letters
+        const searchLeading = normalizedSearch.match(/^(\d+)/)?.[0];
+        const classLeading = normalizedClass.match(/^(\d+)/)?.[0];
+
+        // Leading numbers must match
+        if (searchLeading !== classLeading) {
+            continue;
+        }
+
+        // Get the middle letters (between leading and trailing numbers)
+        const searchMiddle = normalizedSearch.slice(searchLeading?.length || 0, -(searchTrailingNum.length));
+        const classMiddle = normalizedClass.slice(classLeading?.length || 0, -(classTrailingNum.length));
+
+        // For flexible matching: search letters should be a substring of class letters
+        if (classMiddle.includes(searchMiddle)) {
+            return className;
+        }
+    }
+
+    return null;
+}
+
+export async function GET(
+    request: NextRequest,
+    context: { params: Promise<{ classCode: string }> }
+) {
+    try {
+        const { classCode } = await context.params;
+
+        // Get query parameters for time and day
+        const { searchParams } = new URL(request.url);
+        const queryTime = searchParams.get("time") || "";
+        const queryDay = searchParams.get("day") || "";
+
+        const dataPath = path.join(process.cwd(), "data", "schedules.json");
+        const raw = await fs.promises.readFile(dataPath, "utf-8");
+        const schedules: ScheduleData = JSON.parse(raw);
+
+        // Find the class in the schedules using flexible matching
+        const matchedClassName = findMatchingClassName(classCode, schedules);
+        const classSchedule = matchedClassName ? schedules[matchedClassName] : null;
+
+        if (!classSchedule || !matchedClassName) {
+            return NextResponse.json({
+                classCode,
+                status: "no_schedule",
+            });
+        }
+
+        // Use the matched class name for the response
+        const resolvedClassCode = matchedClassName;
+
+        // Build full schedule for the response (organized by day)
+        const fullSchedule: { [day: string]: TimeSlot[] } = {};
+        for (const [dayKey, sessions] of Object.entries(classSchedule.days)) {
+            const dayName = dayKey.split(" ")[0]; // Extract day name
+            if (!fullSchedule[dayName]) {
+                fullSchedule[dayName] = [];
+            }
+            fullSchedule[dayName].push(...sessions);
+        }
+
+        // Get current time in Tunisia timezone (Africa/Tunis = UTC+1)
+        const now = new Date();
+        const tunisiaTime = new Date(now.toLocaleString("en-US", { timeZone: "Africa/Tunis" }));
+        let currentMinutes = tunisiaTime.getHours() * 60 + tunisiaTime.getMinutes();
+        let targetDayName = "";
+
+        // If query parameters are provided, use them
+        if (queryTime && queryDay) {
+            // Parse query time (format: "09:00-10:30" or "09:00")
+            const timeStr = queryTime.includes("-") ? queryTime.split("-")[0] : queryTime;
+            const parsedMinutes = parseTimeStr(timeStr?.replaceAll(":", "H") || "");
+            if (parsedMinutes !== null) {
+                currentMinutes = parsedMinutes;
+            }
+            targetDayName = queryDay;
+        } else if (queryDay) {
+            targetDayName = queryDay;
+        } else {
+            // Use current day in Tunisia timezone
+            const daysOfWeek = ["Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"];
+            targetDayName = daysOfWeek[tunisiaTime.getDay()];
+        }
+
+        // Find session for the target day and time
+        let currentSession: TimeSlot | null = null;
+
+        for (const [dayKey, sessions] of Object.entries(classSchedule.days)) {
+            const dayMatches = targetDayName ? dayKey.startsWith(targetDayName) : dayKey.startsWith(["Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"][now.getDay()]);
+
+            if (dayMatches) {
+                for (const session of sessions) {
+                    // Skip FREE courses (no class at this time)
+                    if (session.course.toUpperCase() === "FREE") {
+                        continue;
+                    }
+
+                    const { start, end } = eventRangeToMinutes(session.time);
+                    // Check if current time falls within this session
+                    if (start !== null && end !== null && currentMinutes >= start && currentMinutes < end) {
+                        currentSession = session;
+                        break;
+                    }
+                }
+                if (currentSession) break;
+            }
+        }
+
+        // If in session (or querying a time when there's a class)
+        if (currentSession) {
+            const { start, end } = eventRangeToMinutes(currentSession.time);
+            return NextResponse.json({
+                classCode: resolvedClassCode,
+                status: "in_session",
+                room: {
+                    roomId: currentSession.room,
+                    name: currentSession.room,
+                    building: currentSession.room.charAt(0),
+                },
+                session: {
+                    start: new Date(now.getFullYear(), now.getMonth(), now.getDate(), Math.floor((start || 0) / 60), (start || 0) % 60).toISOString(),
+                    end: new Date(now.getFullYear(), now.getMonth(), now.getDate(), Math.floor((end || 0) / 60), (end || 0) % 60).toISOString(),
+                    course: currentSession.course,
+                },
+                fullSchedule,
+                metadata: classSchedule.metadata,
+            });
+        }
+
+        // Find next session (skip FREE, NOT-FREE courses)
+        let nextSession: { day: string; start: string; end: string; room: string; course: string } | null = null;
+
+        // Detect if we're in a lunch break
+        let isLunchBreak = false;
+        let lunchBreakEnd = 810; // Default 13:30
+
+        for (const [dayKey, sessions] of Object.entries(classSchedule.days)) {
+            const dayMatches = targetDayName ? dayKey.startsWith(targetDayName) : false;
+            if (dayMatches) {
+                for (const session of sessions) {
+                    if (session.course.toUpperCase() === "FREE") {
+                        const { start, end } = eventRangeToMinutes(session.time);
+                        if (start !== null && end !== null && currentMinutes >= start && currentMinutes < end) {
+                            isLunchBreak = true;
+                            lunchBreakEnd = end;
+                            break;
+                        }
+                    }
+                }
+                if (isLunchBreak) break;
+            }
+        }
+
+        const searchFromMinutes = isLunchBreak ? lunchBreakEnd : currentMinutes;
+
+        // First, try to find next session on the same day
+        for (const [dayKey, sessions] of Object.entries(classSchedule.days)) {
+            const dayMatches = targetDayName ? dayKey.startsWith(targetDayName) : false;
+
+            if (dayMatches) {
+                for (const session of sessions) {
+                    const courseUpper = session.course.toUpperCase();
+
+                    // Skip FREE, NOT-FREE courses
+                    if (courseUpper === "FREE" || courseUpper === "NOT-FREE" || courseUpper === "FREEWARNING") {
+                        continue;
+                    }
+
+                    const { start } = eventRangeToMinutes(session.time);
+
+                    // Only consider sessions that start after current time
+                    if (start !== null && start >= searchFromMinutes) {
+                        nextSession = {
+                            day: dayKey,
+                            start: session.time.split("-")[0]?.trim() || session.time,
+                            end: session.time.split("-")[1]?.trim() || "",
+                            room: session.room,
+                            course: session.course,
+                        };
+                        break;
+                    }
+                }
+                if (nextSession) break;
+            }
+        }
+
+        // If no next session found today, find the first session on any upcoming day
+        if (!nextSession) {
+            for (const [dayKey, sessions] of Object.entries(classSchedule.days)) {
+                for (const session of sessions) {
+                    const courseUpper = session.course.toUpperCase();
+
+                    // Skip FREE, NOT-FREE courses
+                    if (courseUpper === "FREE" || courseUpper === "NOT-FREE" || courseUpper === "FREEWARNING") {
+                        continue;
+                    }
+
+                    nextSession = {
+                        day: dayKey,
+                        start: session.time.split("-")[0]?.trim() || session.time,
+                        end: session.time.split("-")[1]?.trim() || "",
+                        room: session.room,
+                        course: session.course,
+                    };
+                    break;
+                }
+                if (nextSession) break;
+            }
+        }
+
+        return NextResponse.json({
+            classCode: resolvedClassCode,
+            status: "not_in_session",
+            nextSession,
+            fullSchedule,
+            metadata: classSchedule.metadata,
+        });
+    } catch (error) {
+        console.error("Error processing request:", error);
+        return NextResponse.json(
+            { error: "Internal server error" },
+            { status: 500 }
+        );
+    }
+}

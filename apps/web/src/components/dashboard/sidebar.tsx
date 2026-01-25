@@ -19,8 +19,8 @@ import {
 const navItems = [
     { icon: LayoutDashboard, label: "Dashboard", href: "/dashboard" },
     { icon: GraduationCap, label: "Grades", href: "/dashboard/grades" },
+    { icon: Calendar, label: "Schedule", href: "/dashboard/schedule" },
     { icon: BookOpen, label: "Courses", href: "#" },
-    { icon: Calendar, label: "Schedule", href: "#" },
     { icon: Users, label: "Clubs", href: "#" },
     { icon: PartyPopper, label: "Events", href: "#" },
     { icon: Briefcase, label: "Internships", href: "#" },
