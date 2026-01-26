@@ -4,8 +4,25 @@
  * This implements the Esprit portal login flow using browser-native APIs.
  * Based on the endpoints from @lime1/esprit-ts but adapted for browser extensions.
  * 
+ * Multi-Layer Caching Strategy:
+ * 1. localStorage (content script) - instant display
+ * 2. Supabase (cloud) - cross-device sync
+ * 3. Portal fetch - fresh data from old portal
+ * 
+ * Cache Duration: 4 hours before refresh
+ * Fetch Trigger: Only when user visits esprit-tn.com website
+ * 
  * NOTE: Service workers don't have access to DOMParser, so we use regex for HTML parsing.
  */
+
+import {
+  getStudentDataFromSupabase,
+  upsertStudentDataToSupabase,
+  isDataStale,
+  CACHE_DURATION_HOURS,
+  type GradesData,
+  type Credit,
+} from "./supabase-client"
 
 console.log("Esprit Portal Extension - Ready")
 
@@ -808,6 +825,126 @@ function safeSendResponse(sendResponse: (response: unknown) => void, response: u
   }
 }
 
+/**
+ * Get cached credentials from storage
+ */
+async function getCachedCredentials(): Promise<{ id: string; password: string } | null> {
+  const result = await chrome.storage.local.get(["cachedCredentials"])
+  return result.cachedCredentials || null
+}
+
+/**
+ * Save credentials to storage for cache refresh
+ */
+async function saveCachedCredentials(id: string, password: string): Promise<void> {
+  await chrome.storage.local.set({ cachedCredentials: { id, password } })
+}
+
+/**
+ * Multi-layer cache lookup: localStorage → Supabase → Portal fetch
+ * Called when user visits the website and triggers data check
+ */
+async function getDataWithCaching(studentId: string, password: string): Promise<{
+  data: StudentData & { allGrades?: AllGradesData; credits?: Credit[] } | null
+  source: "cache" | "supabase" | "portal"
+  needsRefresh: boolean
+}> {
+  // Step 1: Check chrome.storage.local (extension's localStorage equivalent)
+  const localResult = await chrome.storage.local.get(["studentData", "allGrades", "credits", "cacheTimestamp"])
+  
+  if (localResult.studentData && localResult.studentData.id === studentId) {
+    const cacheTimestamp = localResult.cacheTimestamp || localResult.studentData.lastFetched
+    const isStale = isDataStale(cacheTimestamp)
+    
+    console.log(`Local cache found. Stale: ${isStale}, Last fetched: ${cacheTimestamp}`)
+    
+    return {
+      data: {
+        ...localResult.studentData,
+        allGrades: localResult.allGrades,
+        credits: localResult.credits,
+      },
+      source: "cache",
+      needsRefresh: isStale,
+    }
+  }
+  
+  console.log("No local cache, checking Supabase...")
+  
+  // Step 2: Check Supabase
+  const supabaseData = await getStudentDataFromSupabase(studentId, password)
+  
+  if (supabaseData) {
+    const isStale = isDataStale(supabaseData.updated_at)
+    
+    console.log(`Supabase data found. Stale: ${isStale}, Updated at: ${supabaseData.updated_at}`)
+    
+    // Convert Supabase format to local format
+    const studentData: StudentData = {
+      id: supabaseData.student_id,
+      name: supabaseData.name,
+      className: supabaseData.class_name,
+      grades: supabaseData.grades_data?.regularGrades || null,
+      lastFetched: supabaseData.updated_at,
+    }
+    
+    // Save to local cache
+    await chrome.storage.local.set({
+      studentData,
+      allGrades: supabaseData.grades_data,
+      credits: supabaseData.credits_data,
+      cacheTimestamp: supabaseData.updated_at,
+    })
+    
+    return {
+      data: {
+        ...studentData,
+        allGrades: supabaseData.grades_data as AllGradesData,
+        credits: supabaseData.credits_data as Credit[],
+      },
+      source: "supabase",
+      needsRefresh: isStale,
+    }
+  }
+  
+  console.log("No Supabase data found, will need portal fetch")
+  
+  // Step 3: No cached data anywhere, needs fresh fetch
+  return {
+    data: null,
+    source: "portal",
+    needsRefresh: true,
+  }
+}
+
+/**
+ * Sync data to Supabase after portal fetch
+ */
+async function syncToSupabase(
+  studentId: string,
+  password: string,
+  name: string | null,
+  className: string | null,
+  allGrades: AllGradesData | null,
+  credits: Credit[] | null
+): Promise<void> {
+  try {
+    const success = await upsertStudentDataToSupabase(
+      studentId,
+      password,
+      name,
+      className,
+      allGrades as GradesData,
+      credits
+    )
+    if (success) {
+      console.log("Data synced to Supabase successfully")
+    }
+  } catch (e) {
+    console.error("Failed to sync to Supabase:", e)
+  }
+}
+
 // Handle messages from the website
 chrome.runtime.onMessageExternal.addListener(
   (request, sender, sendResponse) => {
@@ -815,7 +952,22 @@ chrome.runtime.onMessageExternal.addListener(
 
     if (request.action === "LOGIN") {
       handleLogin(request.credentials)
-        .then(result => safeSendResponse(sendResponse, { success: true, data: result }))
+        .then(async (result) => {
+          // Save credentials for future cache refreshes
+          await saveCachedCredentials(request.credentials.id, request.credentials.password)
+          
+          // Sync to Supabase in background
+          syncToSupabase(
+            request.credentials.id,
+            request.credentials.password,
+            result.name,
+            result.className,
+            result.allGrades,
+            result.credits
+          )
+          
+          safeSendResponse(sendResponse, { success: true, data: result })
+        })
         .catch(error => safeSendResponse(sendResponse, { success: false, error: error.message }))
       return true // Keep the message channel open for async response
     }
@@ -859,6 +1011,98 @@ chrome.runtime.onMessageExternal.addListener(
           } else {
             safeSendResponse(sendResponse, { success: false, error: "No credits data found. Make sure you're logged in." })
           }
+        })
+        .catch(error => safeSendResponse(sendResponse, { success: false, error: error.message }))
+      return true
+    }
+
+    // New action: Check cache and optionally refresh
+    if (request.action === "CHECK_CACHE") {
+      const { studentId, password } = request
+      
+      getDataWithCaching(studentId, password)
+        .then(async (result) => {
+          if (result.needsRefresh && result.source !== "portal") {
+            // Return cached data immediately, but flag that refresh is needed
+            safeSendResponse(sendResponse, {
+              success: true,
+              data: result.data,
+              source: result.source,
+              needsRefresh: true,
+            })
+          } else if (result.source === "portal") {
+            // No cached data, respond with empty and needsRefresh flag
+            safeSendResponse(sendResponse, {
+              success: false,
+              data: null,
+              source: "portal",
+              needsRefresh: true,
+              error: "No cached data. Login required.",
+            })
+          } else {
+            // Fresh cached data
+            safeSendResponse(sendResponse, {
+              success: true,
+              data: result.data,
+              source: result.source,
+              needsRefresh: false,
+            })
+          }
+        })
+        .catch(error => safeSendResponse(sendResponse, { success: false, error: error.message }))
+      return true
+    }
+
+    // New action: Background refresh (called by content script when cache is stale)
+    if (request.action === "BACKGROUND_REFRESH") {
+      getCachedCredentials()
+        .then(async (credentials) => {
+          if (!credentials) {
+            safeSendResponse(sendResponse, { success: false, error: "No cached credentials. Login required." })
+            return
+          }
+          
+          try {
+            // Perform full login and fetch
+            const result = await handleLogin(credentials)
+            
+            // Sync to Supabase
+            await syncToSupabase(
+              credentials.id,
+              credentials.password,
+              result.name,
+              result.className,
+              result.allGrades,
+              result.credits
+            )
+            
+            safeSendResponse(sendResponse, { success: true, data: result })
+          } catch (error) {
+            safeSendResponse(sendResponse, { success: false, error: error.message })
+          }
+        })
+        .catch(error => safeSendResponse(sendResponse, { success: false, error: error.message }))
+      return true
+    }
+
+    // New action: Get cache status (for debugging/UI)
+    if (request.action === "GET_CACHE_STATUS") {
+      chrome.storage.local.get(["studentData", "allGrades", "credits", "cacheTimestamp", "cachedCredentials"])
+        .then(async (result) => {
+          const cacheTimestamp = result.cacheTimestamp || result.studentData?.lastFetched
+          const isStale = isDataStale(cacheTimestamp)
+          const hasCredentials = !!result.cachedCredentials
+          
+          safeSendResponse(sendResponse, {
+            success: true,
+            data: {
+              hasLocalCache: !!result.studentData,
+              cacheTimestamp,
+              isStale,
+              hasCredentials,
+              cacheDurationHours: CACHE_DURATION_HOURS,
+            },
+          })
         })
         .catch(error => safeSendResponse(sendResponse, { success: false, error: error.message }))
       return true

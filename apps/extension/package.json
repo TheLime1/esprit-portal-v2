@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@lime1/esprit-ts": "1.1.2",
+    "@supabase/supabase-js": "^2.49.8",
     "axios": "^1.13.2",
     "plasmo": "0.90.5",
     "react": "19.2.3",

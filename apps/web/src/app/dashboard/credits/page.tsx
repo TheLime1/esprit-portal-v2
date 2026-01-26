@@ -270,7 +270,7 @@ export default function CreditsPage() {
         {/* Page Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-4xl font-bold bg-gradient-to-r from-primary to-orange-500 bg-clip-text text-transparent flex items-center gap-3">
+            <h1 className="text-4xl font-bold text-foreground flex items-center gap-3">
               <GraduationCap className="h-10 w-10 text-primary" />
               Credit Exams
             </h1>

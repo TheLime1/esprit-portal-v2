@@ -25,8 +25,8 @@ const navItems = [
   { icon: Award, label: "Credits", href: "/dashboard/credits" },
   { icon: Calendar, label: "Schedule", href: "/dashboard/schedule" },
   { icon: BookOpen, label: "Courses", href: "/dashboard/courses" },
-  { icon: Users, label: "Clubs", href: "#" },
   { icon: Briefcase, label: "Internships", href: "/dashboard/internships" },
+  { icon: Users, label: "Clubs", href: "/dashboard/clubs" },
 ];
 
 interface SidebarProps {
@@ -65,7 +65,7 @@ export function Sidebar({ userName, className }: SidebarProps) {
           />
           <div>
             <h1 className="text-xl font-bold tracking-tight text-foreground">
-              Esprit Portal v2
+              Esprit Portal
             </h1>
             <p className="text-xs text-muted-foreground font-medium">
               by ESPRIT@ds
