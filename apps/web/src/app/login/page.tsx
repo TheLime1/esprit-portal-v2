@@ -102,17 +102,11 @@ export default function LoginPage() {
     setResult(null);
 
     try {
-      // Get extension ID from environment or localStorage
-      let extensionId: string | undefined =
-        process.env.NEXT_PUBLIC_EXTENSION_ID;
+      // Hardcoded extension ID
+      const extensionId: string = "ecoohmcojdcogincjmomppjjhddlfcjj";
 
-      if (globalThis.window !== undefined) {
-        extensionId =
-          extensionId || localStorage.getItem("extensionId") || undefined;
-      }
-
-      // If no extension ID is set, prompt the user
-      if (!extensionId || extensionId === "YOUR_EXTENSION_ID") {
+      // If no extension ID is set, prompt the user (kept for fallback)
+      if (!extensionId) {
         const userInput = prompt(
           "Please enter your Extension ID:\n\n" +
             "1. Go to chrome://extensions\n" +

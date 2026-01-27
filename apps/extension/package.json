@@ -30,7 +30,11 @@
   },
   "manifest": {
     "host_permissions": [
-      "https://*/*"
+      "https://esprit-tn.com/*",
+      "https://*.esprit-tn.com/*",
+      "https://esprit.blackboard.com/*",
+      "https://portal.espritads.site/*",
+      "https://app.espritads.site/*"
     ],
     "permissions": [
       "storage",

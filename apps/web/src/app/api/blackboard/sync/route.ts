@@ -1,20 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 
-// Allowed origins for CORS (Chrome extension IDs)
+// Allowed origins for CORS
 const ALLOWED_ORIGINS = [
-  "chrome-extension://ecoohmcojdcogincjmomppjjhddlfcjj",
+  "chrome-extension://", // Any Chrome extension (validated by externally_connectable)
   "http://localhost:3000",
+  "https://localhost:3000",
   "https://esprit-portal-v2.vercel.app",
+  "https://portal.espritads.site",
 ];
 
-function getCorsHeaders(origin: string | null) {
-  const allowedOrigin = origin && ALLOWED_ORIGINS.some(o => origin.startsWith(o) || origin === o)
-    ? origin
-    : ALLOWED_ORIGINS[0];
+function isOriginAllowed(origin: string | null): boolean {
+  if (!origin) return false;
+  return ALLOWED_ORIGINS.some(allowed => 
+    origin === allowed || origin.startsWith(allowed)
+  );
+}
+
+function getCorsHeaders(origin: string | null): Record<string, string> | null {
+  if (!isOriginAllowed(origin)) {
+    return null; // Will trigger 403 response
+  }
   
   return {
-    "Access-Control-Allow-Origin": allowedOrigin,
+    "Access-Control-Allow-Origin": origin!,
     "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Allow-Credentials": "true",
@@ -27,7 +36,16 @@ function getCorsHeaders(origin: string | null) {
  */
 export async function OPTIONS(request: NextRequest) {
   const origin = request.headers.get("origin");
-  return NextResponse.json({}, { headers: getCorsHeaders(origin) });
+  const corsHeaders = getCorsHeaders(origin);
+  
+  if (!corsHeaders) {
+    return NextResponse.json(
+      { error: "Origin not allowed" },
+      { status: 403 }
+    );
+  }
+  
+  return NextResponse.json({}, { headers: corsHeaders });
 }
 
 /**
@@ -40,6 +58,13 @@ export async function OPTIONS(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const origin = request.headers.get("origin");
   const corsHeaders = getCorsHeaders(origin);
+  
+  if (!corsHeaders) {
+    return NextResponse.json(
+      { error: "Origin not allowed" },
+      { status: 403 }
+    );
+  }
   
   try {
     const body = await request.json();
@@ -114,6 +139,13 @@ export async function POST(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   const origin = request.headers.get("origin");
   const corsHeaders = getCorsHeaders(origin);
+  
+  if (!corsHeaders) {
+    return NextResponse.json(
+      { error: "Origin not allowed" },
+      { status: 403 }
+    );
+  }
   
   try {
     const cookieStore = await cookies();
