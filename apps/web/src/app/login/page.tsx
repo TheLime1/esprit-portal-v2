@@ -103,28 +103,7 @@ export default function LoginPage() {
 
     try {
       // Hardcoded extension ID
-      const extensionId: string = "ecoohmcojdcogincjmomppjjhddlfcjj";
-
-      // If no extension ID is set, prompt the user (kept for fallback)
-      if (!extensionId) {
-        const userInput = prompt(
-          "Please enter your Extension ID:\n\n" +
-            "1. Go to chrome://extensions\n" +
-            "2. Enable Developer Mode\n" +
-            "3. Find 'Esprit Extension'\n" +
-            "4. Copy the ID (under the extension name)\n\n" +
-            "Extension ID:",
-        );
-
-        if (!userInput) {
-          setError("Extension ID is required");
-          setLoading(false);
-          return;
-        }
-
-        extensionId = userInput;
-        localStorage.setItem("extensionId", extensionId);
-      }
+      const extensionId = "ecoohmcojdcogincjmomppjjhddlfcjj";
 
       // Send message to extension
       if (typeof chrome !== "undefined" && chrome.runtime) {

@@ -71,74 +71,10 @@ interface AllGradesData {
   lastFetched?: string;
 }
 
-// Mock data for demonstration (fallback)
-const mockData: AllGradesData = {
-  regularGrades: [
-    {
-      designation: "Mathematics",
-      coefficient: 3,
-      noteCC: 14.5,
-      noteTP: null,
-      noteExam: 12.0,
-    },
-    {
-      designation: "Physics",
-      coefficient: 2,
-      noteCC: 16.0,
-      noteTP: 15.0,
-      noteExam: 13.5,
-    },
-    {
-      designation: "Computer Science",
-      coefficient: 4,
-      noteCC: 18.0,
-      noteTP: 17.5,
-      noteExam: 16.0,
-    },
-    {
-      designation: "Electronics",
-      coefficient: 2,
-      noteCC: 13.0,
-      noteTP: 14.0,
-      noteExam: null,
-    },
-    {
-      designation: "Networks",
-      coefficient: 3,
-      noteCC: 15.5,
-      noteTP: 16.0,
-      noteExam: 14.0,
-    },
-  ],
-  principalResult: {
-    moyenneGeneral: "14.75",
-    decision: "Admis(e)",
-  },
-  rattrapageGrades: [
-    {
-      designation: "Physics",
-      coefficient: 2,
-      noteCC: null,
-      noteTP: null,
-      noteExam: 11.0,
-    },
-  ],
-  rattrapageResult: {
-    moyenneGeneral: "12.50",
-    decision: "Admis(e) après rattrapage",
-  },
-  languageLevels: {
-    francais: "B2",
-    anglais: "C1",
-  },
-  lastFetched: new Date().toISOString(),
-};
-
 export default function GradesPage() {
   const [activeTab, setActiveTab] = useState("regular");
   const [gradesData, setGradesData] = useState<AllGradesData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isUsingMockData, setIsUsingMockData] = useState(false);
   const [accountIssue, setAccountIssue] = useState<string | null>(null);
 
   useEffect(() => {
@@ -153,7 +89,6 @@ export default function GradesPage() {
           const parsedGrades = JSON.parse(storedGrades);
           console.log("Loaded grades from localStorage:", parsedGrades);
           setGradesData(parsedGrades);
-          setIsUsingMockData(false);
         } else {
           // Check if we have student data with grades
           const studentData = localStorage.getItem("esprit_student_data");
@@ -170,22 +105,18 @@ export default function GradesPage() {
                 languageLevels: null,
                 lastFetched: parsed.lastFetched,
               });
-              setIsUsingMockData(false);
             } else {
-              console.log("No grades in student data, using mock data");
-              setGradesData(mockData);
-              setIsUsingMockData(true);
+              console.log("No grades in student data");
+              setGradesData(null);
             }
           } else {
-            console.log("No stored data found, using mock data");
-            setGradesData(mockData);
-            setIsUsingMockData(true);
+            console.log("No stored data found");
+            setGradesData(null);
           }
         }
       } catch (err) {
         console.error("Error loading grades:", err);
-        setGradesData(mockData);
-        setIsUsingMockData(true);
+        setGradesData(null);
       }
 
       setIsLoading(false);
@@ -259,7 +190,6 @@ export default function GradesPage() {
                 JSON.stringify(response.data),
               );
               setGradesData(response.data);
-              setIsUsingMockData(false);
               console.log("Refreshed grades:", response.data);
             } else {
               console.log("Failed to refresh grades:", response?.error);
@@ -524,17 +454,6 @@ export default function GradesPage() {
           </Button>
         </div>
 
-        {/* Data Source Indicator */}
-        {isUsingMockData && (
-          <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3 flex items-center gap-2">
-            <AlertCircle className="h-4 w-4 text-yellow-500" />
-            <p className="text-sm text-yellow-500">
-              Showing mock data. Login with the extension to see your real
-              grades.
-            </p>
-          </div>
-        )}
-
         {/* Tab Slider */}
         <div className="w-full overflow-x-auto pb-2">
           <div className="flex gap-2 min-w-max">
@@ -601,7 +520,7 @@ export default function GradesPage() {
         </Card>
 
         {/* Last Updated */}
-        {gradesData?.lastFetched && !isUsingMockData && (
+        {gradesData?.lastFetched && (
           <p className="text-sm text-muted-foreground text-center">
             Last updated: {new Date(gradesData.lastFetched).toLocaleString()}
           </p>

@@ -26,51 +26,6 @@ interface CreditsData {
   lastFetched?: string;
 }
 
-// Mock data for demonstration (fallback) - matches actual ESPRIT portal structure
-// Note: Credits page shows modules that need to be retaken (failed modules for students with yearly avg >10/20)
-const mockCredits: Credit[] = [
-  {
-    "Année universitaire": "2024",
-    "Unité d'enseignement": "Théorie des langages",
-    Module: "Théorie des langages",
-    Code_module: "AP-10",
-    moy_ue: "2,55",
-    moy_module: "2,55",
-  },
-  {
-    "Année universitaire": "2024",
-    "Unité d'enseignement": "Méthodes numériques pour l'ingénieur",
-    Module: "Analyse Numérique",
-    Code_module: "MS-3821",
-    moy_ue: "5,95",
-    moy_module: "2,55",
-  },
-  {
-    "Année universitaire": "2024",
-    "Unité d'enseignement": "Techniques d'estimation pour l'ingénieur",
-    Module: "Techniques d'estimation pour l'ingénieur",
-    Code_module: "MS-07",
-    moy_ue: "0,20",
-    moy_module: "0,20",
-  },
-  {
-    "Année universitaire": "2023",
-    "Unité d'enseignement": "Mathématiques de base 3",
-    Module: "Mathématiques de Base 3",
-    Code_module: "MS-03",
-    moy_ue: "3,15",
-    moy_module: "3,15",
-  },
-  {
-    "Année universitaire": "2024",
-    "Unité d'enseignement": "Méthodes numériques pour l'ingénieur",
-    Module: "Machine Learning Fundamentals",
-    Code_module: "EECI-343",
-    moy_ue: "5,95",
-    moy_module: "12,75",
-  },
-];
-
 // Helper to get credit value with case-insensitive key matching
 function getCreditValue(credit: Credit, patterns: string[]): string {
   for (const key of Object.keys(credit)) {
@@ -133,7 +88,6 @@ function getScoreColor(score: string): string {
 export default function CreditsPage() {
   const [creditsData, setCreditsData] = useState<CreditsData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isUsingMockData, setIsUsingMockData] = useState(false);
   const [accountIssue, setAccountIssue] = useState<string | null>(null);
 
   useEffect(() => {
@@ -167,7 +121,6 @@ export default function CreditsPage() {
             credits: parsedCredits,
             lastFetched: new Date().toISOString(),
           });
-          setIsUsingMockData(false);
         } else {
           // Check if we have student data with credits
           const studentData = localStorage.getItem("esprit_student_data");
@@ -179,31 +132,18 @@ export default function CreditsPage() {
                 credits: parsed.credits,
                 lastFetched: parsed.lastFetched,
               });
-              setIsUsingMockData(false);
             } else {
-              console.log("No credits in student data, using mock data");
-              setCreditsData({
-                credits: mockCredits,
-                lastFetched: new Date().toISOString(),
-              });
-              setIsUsingMockData(true);
+              console.log("No credits in student data");
+              setCreditsData(null);
             }
           } else {
-            console.log("No stored data found, using mock data");
-            setCreditsData({
-              credits: mockCredits,
-              lastFetched: new Date().toISOString(),
-            });
-            setIsUsingMockData(true);
+            console.log("No stored data found");
+            setCreditsData(null);
           }
         }
       } catch (err) {
         console.error("Error loading credits:", err);
-        setCreditsData({
-          credits: mockCredits,
-          lastFetched: new Date().toISOString(),
-        });
-        setIsUsingMockData(true);
+        setCreditsData(null);
       }
 
       setIsLoading(false);
@@ -246,7 +186,6 @@ export default function CreditsPage() {
                   credits: response.data,
                   lastFetched: new Date().toISOString(),
                 });
-                setIsUsingMockData(false);
                 console.log("Refreshed credits:", response.data);
               } else {
                 console.log("Failed to refresh credits:", response?.error);
@@ -338,17 +277,6 @@ export default function CreditsPage() {
             Refresh
           </Button>
         </div>
-
-        {/* Data Source Indicator */}
-        {isUsingMockData && (
-          <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3 flex items-center gap-2">
-            <AlertCircle className="h-4 w-4 text-yellow-500" />
-            <p className="text-sm text-yellow-500">
-              Showing mock data. Login with the extension to see your actual
-              modules requiring credit exams.
-            </p>
-          </div>
-        )}
 
         {/* Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -638,7 +566,7 @@ export default function CreditsPage() {
         </div>
 
         {/* Last Updated */}
-        {creditsData?.lastFetched && !isUsingMockData && (
+        {creditsData?.lastFetched && (
           <p className="text-sm text-muted-foreground text-center">
             Last updated: {new Date(creditsData.lastFetched).toLocaleString()}
           </p>

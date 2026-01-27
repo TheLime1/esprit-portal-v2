@@ -11,7 +11,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { LogIn, Eye, Loader2 } from "lucide-react";
+import { LogIn, Loader2 } from "lucide-react";
 
 // Check if cached data is stale (older than 4 hours)
 function isDataStale(timestamp: string | undefined): boolean {
@@ -29,7 +29,6 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [studentId, setStudentId] = useState("");
   const [password, setPassword] = useState("");
-  const [showCredentials, setShowCredentials] = useState(false);
 
   // Trigger background refresh via extension
   const triggerBackgroundRefresh = () => {
@@ -48,7 +47,6 @@ export default function LoginPage() {
             return;
           }
           if (response?.success && response.data) {
-            // Update localStorage with fresh data
             localStorage.setItem(
               "esprit_user",
               JSON.stringify({
@@ -68,7 +66,7 @@ export default function LoginPage() {
     }
   };
 
-  // Check for existing login on mount - instant redirect if data exists
+  // Check for existing login on mount
   useEffect(() => {
     const existingUser = localStorage.getItem("esprit_user");
     const existingData = localStorage.getItem("esprit_student_data");
@@ -77,11 +75,9 @@ export default function LoginPage() {
       try {
         const userData = JSON.parse(existingUser);
 
-        // User is logged in - redirect immediately to dashboard
         if (userData.name) {
           console.log("✅ User already logged in, redirecting to dashboard...");
 
-          // Trigger background refresh if data is stale
           try {
             const studentData = JSON.parse(existingData);
             const lastFetched =
@@ -91,7 +87,7 @@ export default function LoginPage() {
               triggerBackgroundRefresh();
             }
           } catch {
-            // Ignore parse errors for stale check
+            // Ignore parse errors
           }
 
           router.replace("/dashboard");
@@ -103,11 +99,10 @@ export default function LoginPage() {
         localStorage.removeItem("esprit_student_data");
       }
     }
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setCheckingAuth(false);
   }, [router]);
 
-  // Show loading while checking if user is already logged in
+  // Show loading while checking auth
   if (checkingAuth) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
@@ -119,11 +114,8 @@ export default function LoginPage() {
     );
   }
 
-  const handleExtensionLogin = async () => {
-    if (!showCredentials) {
-      setShowCredentials(true);
-      return;
-    }
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
 
     if (!studentId || !password) {
       setError("Please enter your student ID and password");
@@ -136,27 +128,6 @@ export default function LoginPage() {
     try {
       // Hardcoded extension ID
       const extensionId = "ecoohmcojdcogincjmomppjjhddlfcjj";
-
-      // If no extension ID is set, prompt the user (kept for fallback)
-      if (!extensionId) {
-        const userInput = prompt(
-          "Please enter your Extension ID:\n\n" +
-            "1. Go to chrome://extensions\n" +
-            "2. Enable Developer Mode\n" +
-            "3. Find 'Esprit Extension'\n" +
-            "4. Copy the ID (under the extension name)\n\n" +
-            "Extension ID:",
-        );
-
-        if (!userInput) {
-          setError("Extension ID is required");
-          setIsLoading(false);
-          return;
-        }
-
-        extensionId = userInput;
-        localStorage.setItem("extensionId", extensionId);
-      }
 
       // Send message to extension
       if (typeof chrome !== "undefined" && chrome.runtime) {
@@ -176,7 +147,6 @@ export default function LoginPage() {
                   "Error: " +
                   chrome.runtime.lastError.message,
               );
-              // Clear invalid extension ID
               localStorage.removeItem("extensionId");
               setIsLoading(false);
               return;
@@ -185,21 +155,16 @@ export default function LoginPage() {
             if (response?.success && response.data) {
               console.log("✅ Login response data:", response.data);
 
-              // IMPORTANT: Save the extensionId so other pages can communicate with extension
-              if (extensionId) {
-                localStorage.setItem("extensionId", extensionId);
-                console.log("✅ extensionId saved:", extensionId);
-              }
+              localStorage.setItem("extensionId", extensionId);
+              console.log("✅ extensionId saved:", extensionId);
 
-              // Check if this is an account with issues (payment, admin, dossier)
+              // Check if this is an account with issues
               if (response.accountIssue) {
                 console.log(
                   "⚠️ Account issue detected:",
                   response.accountIssue,
                 );
-                console.log("Message:", response.accountIssueMessage);
 
-                // Store user data with issue flag
                 const userData = {
                   id: response.data.id || studentId,
                   name: null,
@@ -208,18 +173,12 @@ export default function LoginPage() {
                   accountIssueMessage: response.accountIssueMessage,
                 };
                 localStorage.setItem("esprit_user", JSON.stringify(userData));
-                console.log(
-                  "✅ esprit_user saved with account issue:",
-                  userData,
-                );
-
-                // Navigate to dashboard - the dashboard will show manual class entry
                 router.push("/dashboard");
                 setIsLoading(false);
                 return;
               }
 
-              // Store user data in localStorage for the dashboard
+              // Store user data
               const userData = {
                 id: response.data.id || studentId,
                 name: response.data.name || "Unknown",
@@ -228,14 +187,12 @@ export default function LoginPage() {
               localStorage.setItem("esprit_user", JSON.stringify(userData));
               console.log("✅ esprit_user saved:", userData);
 
-              // Store the full student data (includes grades)
               localStorage.setItem(
                 "esprit_student_data",
                 JSON.stringify(response.data),
               );
               console.log("✅ esprit_student_data saved");
 
-              // Store allGrades directly from response (returned by login)
               if (response.data.allGrades) {
                 localStorage.setItem(
                   "esprit_grades",
@@ -244,7 +201,6 @@ export default function LoginPage() {
                 console.log("✅ esprit_grades saved");
               }
 
-              // Store credits if available
               if (response.data.credits) {
                 localStorage.setItem(
                   "esprit_credits",
@@ -257,7 +213,6 @@ export default function LoginPage() {
                 );
               }
 
-              // Navigate to dashboard
               router.push("/dashboard");
               setIsLoading(false);
             } else {
@@ -278,18 +233,6 @@ export default function LoginPage() {
       );
       setIsLoading(false);
     }
-  };
-
-  const handleViewMockup = () => {
-    // Set mock data
-    localStorage.setItem(
-      "esprit_user",
-      JSON.stringify({
-        name: "Alex Morgan",
-        className: "Computer Science - 3A",
-      }),
-    );
-    router.push("/dashboard");
   };
 
   return (
@@ -321,79 +264,76 @@ export default function LoginPage() {
             </div>
           )}
 
-          {showCredentials && (
-            <div className="space-y-3">
-              <div>
-                <label
-                  htmlFor="studentId"
-                  className="block text-sm font-medium text-foreground mb-2"
-                >
-                  Student ID
-                </label>
-                <input
-                  id="studentId"
-                  type="text"
-                  value={studentId}
-                  onChange={(e) => setStudentId(e.target.value)}
-                  className="w-full px-4 py-2 rounded-lg bg-background border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                  placeholder="Enter your student ID"
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="password"
-                  className="block text-sm font-medium text-foreground mb-2"
-                >
-                  Password
-                </label>
-                <input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-4 py-2 rounded-lg bg-background border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                  placeholder="Enter your password"
-                />
-              </div>
+          <form onSubmit={handleLogin} className="space-y-3">
+            <div>
+              <label
+                htmlFor="studentId"
+                className="block text-sm font-medium text-foreground mb-2"
+              >
+                Student ID
+              </label>
+              <input
+                id="studentId"
+                type="text"
+                value={studentId}
+                onChange={(e) => setStudentId(e.target.value)}
+                className="w-full px-4 py-2 rounded-lg bg-background border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder="Enter your student ID"
+                required
+              />
             </div>
-          )}
-
-          <Button
-            onClick={handleExtensionLogin}
-            className="w-full font-semibold"
-            size="lg"
-            disabled={isLoading}
-          >
-            <LogIn className="h-5 w-5 mr-2" />
-            {isLoading
-              ? "Logging in..."
-              : showCredentials
-                ? "Login"
-                : "Login with Extension"}
-          </Button>
-
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t border-border" />
+            <div>
+              <label
+                htmlFor="password"
+                className="block text-sm font-medium text-foreground mb-2"
+              >
+                Password
+              </label>
+              <input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full px-4 py-2 rounded-lg bg-background border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder="Enter your password"
+                required
+              />
             </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-card px-2 text-muted-foreground">or</span>
-            </div>
-          </div>
 
-          <Button
-            onClick={handleViewMockup}
-            variant="outline"
-            className="w-full font-semibold"
-            size="lg"
-          >
-            <Eye className="h-5 w-5 mr-2" />
-            View Dashboard with Mock Data
-          </Button>
+            <Button
+              type="submit"
+              className="w-full font-semibold"
+              size="lg"
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                  Logging in...
+                </>
+              ) : (
+                <>
+                  <LogIn className="h-5 w-5 mr-2" />
+                  Login
+                </>
+              )}
+            </Button>
+          </form>
 
           <p className="text-xs text-center text-muted-foreground mt-4">
-            Make sure the ESPRIT@ds browser extension is installed and enabled
-            to use the login feature.
+            Make sure the ESPRIT@ds browser extension is installed and enabled.
+          </p>
+
+          <p className="text-[10px] text-center text-muted-foreground/60 mt-2">
+            By logging in, you agree to our{" "}
+            <a
+              href="https://www.espritads.site/privacy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline hover:text-muted-foreground"
+            >
+              Privacy Policy
+            </a>
           </p>
         </CardContent>
       </Card>
