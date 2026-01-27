@@ -1,31 +1,14 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Calendar,
   Clock,
   MapPin,
   Loader2,
   AlertCircle,
-  Search,
-  Building2,
-  CheckCircle2,
-  AlertTriangle,
-  ChevronDown,
-  ChevronUp,
-  Sun,
-  Sunset,
   User,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -48,13 +31,6 @@ interface TimetableData {
     period: string;
     primary_room: string;
   };
-}
-
-interface RoomData {
-  days: string[];
-  buildings: string[];
-  empty: string[];
-  warning: string[];
 }
 
 interface TimetableItem {
@@ -126,7 +102,6 @@ function extractCourseName(courseStr: string): string {
 }
 
 function extractProfessorName(courseStr: string): string | null {
-  // Course format: "COURSE NAME M. FirstName LastName |"
   const match = courseStr.match(/M\.\s*([^|]+?)\s*\|?$/);
   if (match) {
     return match[1].trim();
@@ -135,43 +110,11 @@ function extractProfessorName(courseStr: string): string | null {
 }
 
 function extractClassName(rawClassName: string): string {
-  // Handle formats like "4SAE11 / SAE" -> "4SAE11"
-  // Or "4ERP-BI3 / BI" -> "4ERP-BI3"
   const parts = rawClassName.split("/");
   return parts[0].trim();
 }
 
-export default function SchedulePage() {
-  return (
-    <div className="p-8">
-      <div className="max-w-7xl mx-auto space-y-8">
-        {/* Page Header */}
-        <div>
-          <h1 className="text-3xl font-bold text-foreground">Schedule</h1>
-          <p className="text-muted-foreground mt-1">
-            View your timetable and find empty classrooms
-          </p>
-        </div>
-
-        {/* Two Column Layout */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left Column - Timetable (2/3 width) */}
-          <div className="lg:col-span-2">
-            <TimetableSection />
-          </div>
-
-          {/* Right Column - Find Empty Room (1/3 width) */}
-          <div>
-            <FindEmptyRoomSection />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Timetable Section Component
-function TimetableSection() {
+export function TimetableSection() {
   const [timetableData, setTimetableData] = useState<TimetableData | null>(
     null,
   );
@@ -199,7 +142,6 @@ function TimetableSection() {
           return;
         }
 
-        // Extract clean class name (e.g., "4SAE11 / SAE" -> "4SAE11")
         const cleanClassName = extractClassName(userData.className);
 
         const response = await fetch(
@@ -453,287 +395,6 @@ function TimetableSection() {
                 </div>
               </div>
             ))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-// Find Empty Room Section Component
-function FindEmptyRoomSection() {
-  const [roomData, setRoomData] = useState<RoomData | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [selectedTimeSlot, setSelectedTimeSlot] = useState<
-    "morning" | "afternoon"
-  >("morning");
-  const [selectedDay, setSelectedDay] = useState<string>(getCurrentFrenchDay());
-  const [selectedBuilding, setSelectedBuilding] = useState<string>("all");
-  const [showResults, setShowResults] = useState(false);
-  const [expanded, setExpanded] = useState(false);
-
-  // Fetch initial data for building list
-  useEffect(() => {
-    const fetchInitialData = async () => {
-      try {
-        const response = await fetch("/api/rooms/free?day=Lundi&time=09:00");
-        if (response.ok) {
-          const data = await response.json();
-          setRoomData((prev) => prev || data);
-        }
-      } catch {
-        // Fail silently for initial fetch
-      }
-    };
-    fetchInitialData();
-  }, []);
-
-  const searchRooms = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-
-      // Morning: 09:00, Afternoon: 14:00
-      const time = selectedTimeSlot === "morning" ? "09:00" : "14:00";
-
-      const params = new URLSearchParams({
-        day: selectedDay,
-        time: time,
-        building: selectedBuilding,
-      });
-
-      const response = await fetch(`/api/rooms/free?${params}`);
-
-      if (!response.ok) {
-        throw new Error("Failed to fetch rooms");
-      }
-
-      const data = await response.json();
-      setRoomData(data);
-      setShowResults(true);
-    } catch (err) {
-      console.error("Error fetching rooms:", err);
-      setError(err instanceof Error ? err.message : "Failed to find rooms");
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedDay, selectedTimeSlot, selectedBuilding]);
-
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    searchRooms();
-  };
-
-  const displayedRooms = expanded
-    ? roomData?.empty || []
-    : (roomData?.empty || []).slice(0, 12);
-
-  const displayedWarnings = expanded
-    ? roomData?.warning || []
-    : (roomData?.warning || []).slice(0, 6);
-
-  return (
-    <Card className="overflow-hidden sticky top-4">
-      <CardHeader className="pb-4 border-b border-border">
-        <CardTitle className="flex items-center gap-2 text-lg font-bold">
-          <Search className="h-5 w-5 text-primary" />
-          Find Empty Room
-        </CardTitle>
-      </CardHeader>
-
-      <CardContent className="p-5 space-y-4">
-        <form className="space-y-4" onSubmit={handleSearch}>
-          {/* Day Select */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-muted-foreground">
-              Day
-            </label>
-            <Select value={selectedDay} onValueChange={setSelectedDay}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select day" />
-              </SelectTrigger>
-              <SelectContent>
-                {Object.entries(DAYS_ENGLISH)
-                  .slice(0, 6)
-                  .map(([fr, en]) => (
-                    <SelectItem key={fr} value={fr}>
-                      {en}
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Time Slot Buttons */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-muted-foreground">
-              Time Slot
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              <Button
-                type="button"
-                variant={selectedTimeSlot === "morning" ? "default" : "outline"}
-                className={cn(
-                  "flex items-center gap-2 h-12",
-                  selectedTimeSlot === "morning" && "shadow-sm",
-                )}
-                onClick={() => setSelectedTimeSlot("morning")}
-              >
-                <Sun className="h-4 w-4" />
-                <span className="font-medium">9AM - 12PM</span>
-              </Button>
-              <Button
-                type="button"
-                variant={
-                  selectedTimeSlot === "afternoon" ? "default" : "outline"
-                }
-                className={cn(
-                  "flex items-center gap-2 h-12",
-                  selectedTimeSlot === "afternoon" && "shadow-sm",
-                )}
-                onClick={() => setSelectedTimeSlot("afternoon")}
-              >
-                <Sunset className="h-4 w-4" />
-                <span className="font-medium">1PM - 4PM</span>
-              </Button>
-            </div>
-          </div>
-
-          {/* Building Select */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-muted-foreground">
-              Building
-            </label>
-            <Select
-              value={selectedBuilding}
-              onValueChange={setSelectedBuilding}
-            >
-              <SelectTrigger>
-                <Building2 className="h-4 w-4 text-muted-foreground mr-2" />
-                <SelectValue placeholder="Select building" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Buildings</SelectItem>
-                {(roomData?.buildings || []).map((building) => (
-                  <SelectItem key={building} value={building}>
-                    Building {building}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Search Button */}
-          <Button
-            type="submit"
-            className="w-full font-bold shadow-sm"
-            disabled={loading}
-          >
-            {loading ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Searching...
-              </>
-            ) : (
-              <>
-                <Search className="mr-2 h-4 w-4" />
-                Search Rooms
-              </>
-            )}
-          </Button>
-        </form>
-
-        {/* Error State */}
-        {error && (
-          <div className="flex items-center gap-2 text-destructive text-sm p-3 bg-destructive/10 rounded-lg">
-            <AlertCircle className="h-4 w-4 flex-shrink-0" />
-            {error}
-          </div>
-        )}
-
-        {/* Results */}
-        {showResults && roomData && !loading && (
-          <div className="space-y-4 pt-4 border-t border-border">
-            {/* Empty Rooms */}
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="text-sm font-semibold flex items-center gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-green-500" />
-                  Available
-                </h4>
-                <Badge variant="secondary" className="text-xs">
-                  {roomData.empty.length} rooms
-                </Badge>
-              </div>
-
-              {roomData.empty.length === 0 ? (
-                <p className="text-sm text-muted-foreground italic">
-                  No empty rooms found
-                </p>
-              ) : (
-                <ScrollArea
-                  className={cn("w-full", expanded ? "max-h-[250px]" : "")}
-                >
-                  <div className="flex flex-wrap gap-1.5">
-                    {displayedRooms.map((room) => (
-                      <Badge
-                        key={room}
-                        variant="outline"
-                        className="bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/30 text-xs"
-                      >
-                        {room}
-                      </Badge>
-                    ))}
-                  </div>
-                </ScrollArea>
-              )}
-            </div>
-
-            {/* Warning Rooms */}
-            {roomData.warning.length > 0 && (
-              <div>
-                <h4 className="text-sm font-semibold flex items-center gap-2 mb-3">
-                  <AlertTriangle className="h-4 w-4 text-yellow-500" />
-                  May Have Exam/Soutenance
-                </h4>
-                <div className="flex flex-wrap gap-1.5">
-                  {displayedWarnings.map((room) => (
-                    <Badge
-                      key={room}
-                      variant="outline"
-                      className="bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border-yellow-500/30 text-xs"
-                    >
-                      {room}
-                    </Badge>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Expand/Collapse Button */}
-            {(roomData.empty.length > 12 || roomData.warning.length > 6) && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="w-full text-muted-foreground"
-                onClick={() => setExpanded(!expanded)}
-              >
-                {expanded ? (
-                  <>
-                    <ChevronUp className="mr-1 h-4 w-4" />
-                    Show Less
-                  </>
-                ) : (
-                  <>
-                    <ChevronDown className="mr-1 h-4 w-4" />
-                    Show All ({roomData.empty.length +
-                      roomData.warning.length}{" "}
-                    rooms)
-                  </>
-                )}
-              </Button>
-            )}
           </div>
         )}
       </CardContent>

@@ -4,10 +4,11 @@ import { useEffect, useState, useCallback } from "react";
 import {
   AlertBanner,
   Header,
-  Timetable,
+  TimetableSection,
   ProfessorRating,
   FindRoom,
   UpcomingEvents,
+  AttendanceChart,
 } from "@/components/dashboard";
 
 interface UserData {
@@ -169,7 +170,7 @@ export default function DashboardPage() {
             {/* Left Column (Wide) */}
             <div className="lg:col-span-2 space-y-6">
               {/* Timeline / Schedule */}
-              <Timetable />
+              <TimetableSection />
 
               {/* Professor Rating Section */}
               <ProfessorRating />
@@ -177,6 +178,9 @@ export default function DashboardPage() {
 
             {/* Right Column (Narrow) */}
             <div className="space-y-6">
+              {/* Attendance Chart */}
+              <AttendanceChart />
+
               {/* Find Empty Classroom */}
               <FindRoom />
 
