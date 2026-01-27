@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { ChartContainer, ChartTooltipContent } from "@/components/ui/chart";
-import { Loader2, AlertCircle, UserCheck, Link2 } from "lucide-react";
+import { Loader2, UserCheck, Link2 } from "lucide-react";
 import Link from "next/link";
 
 // Chrome extension types
@@ -120,6 +120,7 @@ export function AttendanceChart() {
   }, [checkLocalStorage]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchAttendance();
   }, [fetchAttendance]);
 

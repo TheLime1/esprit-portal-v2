@@ -83,7 +83,9 @@ export function AccountIssueCard({
       try {
         const userData = JSON.parse(storedUser);
         if (userData.className && userData.className !== "N/A") {
+          // eslint-disable-next-line react-hooks/set-state-in-effect
           setClassName(userData.className);
+
           setSaved(true);
         }
       } catch {

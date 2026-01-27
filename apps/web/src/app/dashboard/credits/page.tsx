@@ -137,22 +137,23 @@ export default function CreditsPage() {
   const [accountIssue, setAccountIssue] = useState<string | null>(null);
 
   useEffect(() => {
-    // Check for account issue first
-    const storedUser = localStorage.getItem("esprit_user");
-    if (storedUser) {
-      try {
-        const userData = JSON.parse(storedUser);
-        if (userData.accountIssue) {
-          setAccountIssue(userData.accountIssue);
-          setIsLoading(false);
-          return;
-        }
-      } catch {
-        // Ignore parse errors
-      }
-    }
-
     const loadCreditsFromStorage = () => {
+      // Check for account issue first
+      const storedUser = localStorage.getItem("esprit_user");
+      if (storedUser) {
+        try {
+          const userData = JSON.parse(storedUser);
+          if (userData.accountIssue) {
+            setAccountIssue(userData.accountIssue);
+
+            setIsLoading(false);
+            return;
+          }
+        } catch {
+          // Ignore parse errors
+        }
+      }
+
       setIsLoading(true);
 
       try {
@@ -499,11 +500,11 @@ export default function CreditsPage() {
                         "moyenne",
                       ]);
                       const isPassing = parseEuropeanNumber(moduleAvg) >= 8; // 8/20 is passing grade
-                      const module = getCreditValue(credit, ["module"]);
+                      const moduleName = getCreditValue(credit, ["module"]);
 
                       return (
                         <tr
-                          key={`row-${rowIdx}-${module}`}
+                          key={`row-${rowIdx}-${moduleName}`}
                           className="border-b border-border/50 hover:bg-muted/50 transition-colors"
                         >
                           {headers.map((header, colIdx) => {
@@ -555,7 +556,7 @@ export default function CreditsPage() {
               "year",
               "universitaire",
             ]);
-            const module = getCreditValue(credit, ["module"]);
+            const moduleName = getCreditValue(credit, ["module"]);
             const unitName = getCreditValue(credit, [
               "unité",
               "enseignement",
@@ -568,7 +569,7 @@ export default function CreditsPage() {
 
             return (
               <Card
-                key={`module-${idx}-${code || module}`}
+                key={`module-${idx}-${code || moduleName}`}
                 className={cn(
                   "transition-all duration-300 hover:shadow-lg border-l-4",
                   isPassing ? "border-l-green-500" : "border-l-red-500",
@@ -588,9 +589,9 @@ export default function CreditsPage() {
                         )}
                       </div>
                       <h3 className="font-semibold text-foreground">
-                        {module || unitName || "Module"}
+                        {moduleName || unitName || "Module"}
                       </h3>
-                      {unitName && module && unitName !== module && (
+                      {unitName && moduleName && unitName !== moduleName && (
                         <p className="text-sm text-muted-foreground">
                           {unitName}
                         </p>

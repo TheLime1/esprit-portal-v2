@@ -13,12 +13,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { LogIn, Eye, Loader2 } from "lucide-react";
 
-declare global {
-  interface Window {
-    chrome?: typeof chrome;
-  }
-}
-
 // Check if cached data is stale (older than 4 hours)
 function isDataStale(timestamp: string | undefined): boolean {
   if (!timestamp) return true;
@@ -36,6 +30,43 @@ export default function LoginPage() {
   const [studentId, setStudentId] = useState("");
   const [password, setPassword] = useState("");
   const [showCredentials, setShowCredentials] = useState(false);
+
+  // Trigger background refresh via extension
+  const triggerBackgroundRefresh = () => {
+    const extensionId = localStorage.getItem("extensionId");
+    if (extensionId && typeof chrome !== "undefined" && chrome.runtime) {
+      chrome.runtime.sendMessage(
+        extensionId,
+        { action: "BACKGROUND_REFRESH" },
+        (
+          response:
+            | { success?: boolean; data?: Record<string, unknown> }
+            | undefined,
+        ) => {
+          if (chrome.runtime.lastError) {
+            console.log("Background refresh failed:", chrome.runtime.lastError);
+            return;
+          }
+          if (response?.success && response.data) {
+            // Update localStorage with fresh data
+            localStorage.setItem(
+              "esprit_user",
+              JSON.stringify({
+                id: response.data.id,
+                name: response.data.name,
+                className: response.data.className,
+              }),
+            );
+            localStorage.setItem(
+              "esprit_student_data",
+              JSON.stringify(response.data),
+            );
+            console.log("✅ Background refresh completed");
+          }
+        },
+      );
+    }
+  };
 
   // Check for existing login on mount - instant redirect if data exists
   useEffect(() => {
@@ -72,41 +103,9 @@ export default function LoginPage() {
         localStorage.removeItem("esprit_student_data");
       }
     }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setCheckingAuth(false);
   }, [router]);
-
-  // Trigger background refresh via extension
-  const triggerBackgroundRefresh = () => {
-    const extensionId = localStorage.getItem("extensionId");
-    if (extensionId && typeof chrome !== "undefined" && chrome.runtime) {
-      chrome.runtime.sendMessage(
-        extensionId,
-        { action: "BACKGROUND_REFRESH" },
-        (response: any) => {
-          if (chrome.runtime.lastError) {
-            console.log("Background refresh failed:", chrome.runtime.lastError);
-            return;
-          }
-          if (response?.success && response.data) {
-            // Update localStorage with fresh data
-            localStorage.setItem(
-              "esprit_user",
-              JSON.stringify({
-                id: response.data.id,
-                name: response.data.name,
-                className: response.data.className,
-              }),
-            );
-            localStorage.setItem(
-              "esprit_student_data",
-              JSON.stringify(response.data),
-            );
-            console.log("✅ Background refresh completed");
-          }
-        },
-      );
-    }
-  };
 
   // Show loading while checking if user is already logged in
   if (checkingAuth) {

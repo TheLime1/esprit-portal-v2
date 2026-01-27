@@ -1,3 +1,6 @@
+"use client";
+
+import { useState, useEffect } from "react";
 import {
   Sidebar,
   AlertBanner,
@@ -10,10 +13,26 @@ import {
 } from "@/components/dashboard";
 
 export default function TestDashboardPage() {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMounted(true);
+  }, []);
+
+  // Avoid SSR issues with components that use useTheme
+  if (!mounted) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-background">
+        <div className="animate-pulse text-muted-foreground">Loading...</div>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-background text-foreground h-screen overflow-hidden flex">
       {/* Sidebar */}
-      <Sidebar />
+      <Sidebar userName="Test User" className="3A-TEST" />
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col h-full overflow-hidden relative">

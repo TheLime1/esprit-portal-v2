@@ -20,8 +20,45 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Trigger background refresh via extension
+  const triggerBackgroundRefresh = () => {
+    const extensionId = localStorage.getItem("extensionId");
+    if (extensionId && typeof chrome !== "undefined" && chrome.runtime) {
+      chrome.runtime.sendMessage(
+        extensionId,
+        { action: "BACKGROUND_REFRESH" },
+        (
+          response:
+            | { success?: boolean; data?: Record<string, unknown> }
+            | undefined,
+        ) => {
+          if (chrome.runtime.lastError) {
+            console.log("Background refresh failed:", chrome.runtime.lastError);
+            return;
+          }
+          if (response?.success && response.data) {
+            // Update localStorage with fresh data
+            localStorage.setItem(
+              "esprit_user",
+              JSON.stringify({
+                id: response.data.id,
+                name: response.data.name,
+                className: response.data.className,
+              }),
+            );
+            localStorage.setItem(
+              "esprit_student_data",
+              JSON.stringify(response.data),
+            );
+            console.log("✅ Background refresh completed");
+          }
+        },
+      );
+    }
+  };
 
   // Check for existing login on mount - instant redirect if data exists
   useEffect(() => {
@@ -54,41 +91,9 @@ export default function LoginPage() {
         localStorage.removeItem("esprit_student_data");
       }
     }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setCheckingAuth(false);
   }, [router]);
-
-  // Trigger background refresh via extension
-  const triggerBackgroundRefresh = () => {
-    const extensionId = localStorage.getItem("extensionId");
-    if (extensionId && typeof chrome !== "undefined" && chrome.runtime) {
-      chrome.runtime.sendMessage(
-        extensionId,
-        { action: "BACKGROUND_REFRESH" },
-        (response: any) => {
-          if (chrome.runtime.lastError) {
-            console.log("Background refresh failed:", chrome.runtime.lastError);
-            return;
-          }
-          if (response?.success && response.data) {
-            // Update localStorage with fresh data
-            localStorage.setItem(
-              "esprit_user",
-              JSON.stringify({
-                id: response.data.id,
-                name: response.data.name,
-                className: response.data.className,
-              }),
-            );
-            localStorage.setItem(
-              "esprit_student_data",
-              JSON.stringify(response.data),
-            );
-            console.log("✅ Background refresh completed");
-          }
-        },
-      );
-    }
-  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -98,10 +103,12 @@ export default function LoginPage() {
 
     try {
       // Get extension ID from environment or localStorage
-      let extensionId = process.env.NEXT_PUBLIC_EXTENSION_ID;
+      let extensionId: string | undefined =
+        process.env.NEXT_PUBLIC_EXTENSION_ID;
 
       if (globalThis.window !== undefined) {
-        extensionId = extensionId || localStorage.getItem("extensionId");
+        extensionId =
+          extensionId || localStorage.getItem("extensionId") || undefined;
       }
 
       // If no extension ID is set, prompt the user
@@ -215,8 +222,8 @@ export default function LoginPage() {
         );
         setLoading(false);
       }
-    } catch (err: any) {
-      setError(err.message || "An error occurred");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "An error occurred");
       setLoading(false);
     }
   };

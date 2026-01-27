@@ -53,12 +53,6 @@ interface BBCourse {
   url?: string;
 }
 
-interface BBCoursesResponse {
-  success: boolean;
-  courses: BBCourse[];
-  lastSync?: string;
-}
-
 // French day names
 const DAYS_ENGLISH: { [key: string]: string } = {
   Lundi: "Monday",
@@ -189,14 +183,16 @@ export default function CoursesPage() {
 
               // Also cache assignments separately for homework page
               if (response.assignments && response.assignments.length > 0) {
+                const assignments = response.assignments as Array<{
+                  status: string;
+                }>;
                 const assignmentsData = {
                   success: true,
                   assignments: response.assignments,
                   deadlineAlert: null,
                   total: response.assignments.length,
-                  pending: response.assignments.filter(
-                    (a: { status: string }) => a.status !== "Graded",
-                  ).length,
+                  pending: assignments.filter((a) => a.status !== "Graded")
+                    .length,
                 };
                 localStorage.setItem(
                   "esprit_bb_assignments",
@@ -218,7 +214,7 @@ export default function CoursesPage() {
 
   const fetchBlackboardCourses = useCallback(async () => {
     // First, show cached data instantly
-    let cachedCourses = checkLocalStorage();
+    const cachedCourses = checkLocalStorage();
     if (cachedCourses && cachedCourses.length > 0) {
       setBbCourses(cachedCourses);
       setBbConnected(true);

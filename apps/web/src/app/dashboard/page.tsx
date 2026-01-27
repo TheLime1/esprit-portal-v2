@@ -131,6 +131,7 @@ export default function DashboardPage() {
     const storedUser = localStorage.getItem("esprit_user");
     if (storedUser) {
       try {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setUserData(JSON.parse(storedUser));
       } catch {
         // Layout handles redirect

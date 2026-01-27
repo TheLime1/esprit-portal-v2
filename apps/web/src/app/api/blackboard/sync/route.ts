@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
 
-    const { user, courses, assignments, attendance, attendanceStats, bbCookies, studentId } = body;
+    const { user, courses, assignments, attendance, attendanceStats, studentId } = body;
 
     if (!user) {
       return NextResponse.json(

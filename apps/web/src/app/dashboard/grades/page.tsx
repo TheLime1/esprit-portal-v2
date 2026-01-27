@@ -142,13 +142,64 @@ export default function GradesPage() {
   const [accountIssue, setAccountIssue] = useState<string | null>(null);
 
   useEffect(() => {
+    const loadGradesFromStorage = () => {
+      setIsLoading(true);
+
+      try {
+        // Try to load grades from localStorage (set during login)
+        const storedGrades = localStorage.getItem("esprit_grades");
+
+        if (storedGrades) {
+          const parsedGrades = JSON.parse(storedGrades);
+          console.log("Loaded grades from localStorage:", parsedGrades);
+          setGradesData(parsedGrades);
+          setIsUsingMockData(false);
+        } else {
+          // Check if we have student data with grades
+          const studentData = localStorage.getItem("esprit_student_data");
+          if (studentData) {
+            const parsed = JSON.parse(studentData);
+            // If student data has grades, use them
+            if (parsed.grades && parsed.grades.length > 0) {
+              console.log("Using grades from student data:", parsed.grades);
+              setGradesData({
+                regularGrades: parsed.grades,
+                principalResult: null,
+                rattrapageGrades: null,
+                rattrapageResult: null,
+                languageLevels: null,
+                lastFetched: parsed.lastFetched,
+              });
+              setIsUsingMockData(false);
+            } else {
+              console.log("No grades in student data, using mock data");
+              setGradesData(mockData);
+              setIsUsingMockData(true);
+            }
+          } else {
+            console.log("No stored data found, using mock data");
+            setGradesData(mockData);
+            setIsUsingMockData(true);
+          }
+        }
+      } catch (err) {
+        console.error("Error loading grades:", err);
+        setGradesData(mockData);
+        setIsUsingMockData(true);
+      }
+
+      setIsLoading(false);
+    };
+
     // Check for account issue first
     const storedUser = localStorage.getItem("esprit_user");
     if (storedUser) {
       try {
         const userData = JSON.parse(storedUser);
         if (userData.accountIssue) {
+          // eslint-disable-next-line react-hooks/set-state-in-effect
           setAccountIssue(userData.accountIssue);
+
           setIsLoading(false);
           return;
         }
@@ -190,55 +241,6 @@ export default function GradesPage() {
       </div>
     );
   }
-
-  const loadGradesFromStorage = () => {
-    setIsLoading(true);
-
-    try {
-      // Try to load grades from localStorage (set during login)
-      const storedGrades = localStorage.getItem("esprit_grades");
-
-      if (storedGrades) {
-        const parsedGrades = JSON.parse(storedGrades);
-        console.log("Loaded grades from localStorage:", parsedGrades);
-        setGradesData(parsedGrades);
-        setIsUsingMockData(false);
-      } else {
-        // Check if we have student data with grades
-        const studentData = localStorage.getItem("esprit_student_data");
-        if (studentData) {
-          const parsed = JSON.parse(studentData);
-          // If student data has grades, use them
-          if (parsed.grades && parsed.grades.length > 0) {
-            console.log("Using grades from student data:", parsed.grades);
-            setGradesData({
-              regularGrades: parsed.grades,
-              principalResult: null,
-              rattrapageGrades: null,
-              rattrapageResult: null,
-              languageLevels: null,
-              lastFetched: parsed.lastFetched,
-            });
-            setIsUsingMockData(false);
-          } else {
-            console.log("No grades in student data, using mock data");
-            setGradesData(mockData);
-            setIsUsingMockData(true);
-          }
-        } else {
-          console.log("No stored data found, using mock data");
-          setGradesData(mockData);
-          setIsUsingMockData(true);
-        }
-      }
-    } catch (err) {
-      console.error("Error loading grades:", err);
-      setGradesData(mockData);
-      setIsUsingMockData(true);
-    }
-
-    setIsLoading(false);
-  };
 
   const refreshGrades = async () => {
     setIsLoading(true);

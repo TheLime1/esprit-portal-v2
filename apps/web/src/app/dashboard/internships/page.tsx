@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Briefcase,
   MapPin,
@@ -16,7 +15,6 @@ import {
   Search,
   Filter,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
 import {
   Select,
   SelectContent,
@@ -44,6 +42,7 @@ interface InternshipsResponse {
   items: Internship[];
   total: number;
   lastUpdated: string;
+  error?: string;
 }
 
 function formatDate(dateStr: string): string {
@@ -117,9 +116,7 @@ export default function InternshipsPage() {
         const data: InternshipsResponse = await response.json();
 
         if (!data.success) {
-          throw new Error(
-            (data.error as string) || "Failed to load internships",
-          );
+          throw new Error(data.error || "Failed to load internships");
         }
 
         setInternships(data.items);

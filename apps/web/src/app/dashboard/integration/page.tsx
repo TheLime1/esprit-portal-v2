@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import Image from "next/image";
 import {
   Card,
   CardContent,
@@ -208,11 +209,12 @@ export default function IntegrationPage() {
           <CardHeader>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-lg overflow-hidden">
-                  <img
+                <div className="w-12 h-12 rounded-lg overflow-hidden relative">
+                  <Image
                     src="/blackboard.jpeg"
                     alt="Blackboard"
-                    className="w-full h-full object-cover"
+                    fill
+                    className="object-cover"
                   />
                 </div>
                 <div>
