@@ -153,6 +153,12 @@ export default function LoginPage() {
               setResult(response.data);
               setError(null);
 
+              // IMPORTANT: Save the extensionId so other pages can communicate with extension
+              if (extensionId) {
+                localStorage.setItem("extensionId", extensionId);
+                console.log("✅ extensionId saved:", extensionId);
+              }
+
               // Store data in localStorage for dashboard pages
               if (response.data) {
                 // Store student data

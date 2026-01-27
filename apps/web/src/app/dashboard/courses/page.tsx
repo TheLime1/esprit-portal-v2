@@ -123,38 +123,171 @@ export default function CoursesPage() {
   const [bbLoading, setBbLoading] = useState(false);
   const [bbConnected, setBbConnected] = useState(false);
 
+  // Check localStorage for cached Blackboard courses first (instant)
+  const checkLocalStorage = useCallback(() => {
+    try {
+      console.log("🔍 Checking localStorage for BB courses...");
+      const cachedBBData = localStorage.getItem("esprit_bb_session");
+      if (cachedBBData) {
+        const parsed = JSON.parse(cachedBBData);
+        if (
+          parsed.courses &&
+          Array.isArray(parsed.courses) &&
+          parsed.courses.length > 0
+        ) {
+          console.log(
+            "✅ Found courses in esprit_bb_session:",
+            parsed.courses.length,
+          );
+          return parsed.courses as BBCourse[];
+        }
+      }
+      console.log("❌ No courses found in localStorage");
+    } catch {
+      // No cached data available, continue with normal flow
+    }
+    return null;
+  }, []);
+
+  // Try to fetch and cache full BB data from extension
+  const fetchAndCacheFullBBData = useCallback(
+    (extensionId: string): Promise<BBCourse[]> => {
+      return new Promise((resolve) => {
+        chrome.runtime.sendMessage(
+          extensionId,
+          { action: "GET_BB_STATUS" },
+          (response: {
+            connected: boolean;
+            user?: { id: string; name: string; username: string };
+            courses?: BBCourse[];
+            assignments?: unknown[];
+            attendance?: unknown[];
+            attendanceStats?: unknown;
+            lastSync?: string;
+          }) => {
+            if (chrome.runtime.lastError || !response?.connected) {
+              console.log("❌ Extension not connected or error");
+              resolve([]);
+              return;
+            }
+
+            // Cache full BB data to localStorage
+            if (response.user) {
+              const sessionData = {
+                user: response.user,
+                courses: response.courses || [],
+                assignments: response.assignments || [],
+                attendance: response.attendance || [],
+                attendanceStats: response.attendanceStats,
+                savedAt: response.lastSync || new Date().toISOString(),
+              };
+              localStorage.setItem(
+                "esprit_bb_session",
+                JSON.stringify(sessionData),
+              );
+              console.log("✅ Cached full BB data to esprit_bb_session");
+
+              // Also cache assignments separately for homework page
+              if (response.assignments && response.assignments.length > 0) {
+                const assignmentsData = {
+                  success: true,
+                  assignments: response.assignments,
+                  deadlineAlert: null,
+                  total: response.assignments.length,
+                  pending: response.assignments.filter(
+                    (a: { status: string }) => a.status !== "Graded",
+                  ).length,
+                };
+                localStorage.setItem(
+                  "esprit_bb_assignments",
+                  JSON.stringify(assignmentsData),
+                );
+                console.log("✅ Cached assignments to esprit_bb_assignments");
+              }
+
+              resolve(response.courses || []);
+              return;
+            }
+            resolve([]);
+          },
+        );
+      });
+    },
+    [],
+  );
+
   const fetchBlackboardCourses = useCallback(async () => {
-    setBbLoading(true);
+    // First, show cached data instantly
+    let cachedCourses = checkLocalStorage();
+    if (cachedCourses && cachedCourses.length > 0) {
+      setBbCourses(cachedCourses);
+      setBbConnected(true);
+      setBbLoading(false);
+    } else {
+      setBbLoading(true);
+    }
+
     try {
       // Get extension ID from localStorage
       const extensionId = localStorage.getItem("extensionId");
 
       if (!extensionId || typeof chrome === "undefined" || !chrome.runtime) {
+        console.log("❌ No extensionId or chrome API not available");
         setBbLoading(false);
         return;
       }
 
-      // Ask extension for courses from local storage
+      // If no cached data, try to fetch and cache full BB data first
+      if (!cachedCourses || cachedCourses.length === 0) {
+        console.log("📥 Fetching full BB data from extension...");
+        const courses = await fetchAndCacheFullBBData(extensionId);
+        if (courses.length > 0) {
+          setBbCourses(courses);
+          setBbConnected(true);
+          setBbLoading(false);
+          return;
+        }
+      }
+
+      // Ask extension for courses from local storage (may have fresher data)
       chrome.runtime.sendMessage(
         extensionId,
         { action: "GET_BB_COURSES" },
-        (response) => {
+        (response: {
+          success: boolean;
+          courses?: BBCourse[];
+          lastSync?: string;
+        }) => {
           if (chrome.runtime.lastError || !response?.success) {
             console.log("Blackboard not connected");
             setBbLoading(false);
             return;
           }
 
-          setBbCourses(response.courses || []);
-          setBbConnected(response.courses?.length > 0);
+          const courses = response.courses || [];
+          setBbCourses(courses);
+          setBbConnected(courses.length > 0);
           setBbLoading(false);
+
+          // Cache courses in esprit_bb_session for instant display next time
+          if (courses.length > 0) {
+            try {
+              const existingData = localStorage.getItem("esprit_bb_session");
+              const parsed = existingData ? JSON.parse(existingData) : {};
+              parsed.courses = courses;
+              parsed.savedAt = response.lastSync || new Date().toISOString();
+              localStorage.setItem("esprit_bb_session", JSON.stringify(parsed));
+            } catch {
+              // Ignore localStorage errors
+            }
+          }
         },
       );
     } catch (err) {
       console.log("Blackboard not connected:", err);
       setBbLoading(false);
     }
-  }, []);
+  }, [checkLocalStorage, fetchAndCacheFullBBData]);
 
   useEffect(() => {
     const fetchTimetable = async () => {

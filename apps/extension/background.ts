@@ -2284,10 +2284,13 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
       const stored = await chrome.storage.local.get(["bbSession"])
       
       if (stored.bbSession?.user) {
-        // We have cached data, return it
+        // We have cached data, return FULL data so web app can cache it properly
         sendResponse({
           connected: true,
           user: stored.bbSession.user,
+          courses: stored.bbSession.courses || [],
+          assignments: stored.bbSession.assignments || [],
+          attendance: stored.bbSession.attendance || [],
           courseCount: stored.bbSession.courses?.length || 0,
           assignmentCount: stored.bbSession.assignments?.length || 0,
           attendanceStats: stored.bbSession.attendanceStats || null,
@@ -2317,6 +2320,9 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
           username: user.userName,
           email: user.contact?.email,
         },
+        courses: [],
+        assignments: [],
+        attendance: [],
         courseCount: 0,
         assignmentCount: 0,
         attendanceStats: null,

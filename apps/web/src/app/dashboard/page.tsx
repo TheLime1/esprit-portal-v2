@@ -29,13 +29,59 @@ export default function DashboardPage() {
   );
 
   // Check localStorage for cached deadline alert first
+  // Checks both esprit_bb_assignments and esprit_bb_session as fallback
   const checkLocalStorage = useCallback(() => {
     try {
+      // First check dedicated assignments cache
       const cachedAssignments = localStorage.getItem("esprit_bb_assignments");
       if (cachedAssignments) {
         const parsed = JSON.parse(cachedAssignments);
         if (parsed.deadlineAlert) {
           return parsed.deadlineAlert;
+        }
+      }
+
+      // Fallback: calculate from esprit_bb_session assignments
+      const cachedSession = localStorage.getItem("esprit_bb_session");
+      if (cachedSession) {
+        const parsed = JSON.parse(cachedSession);
+        if (parsed.assignments && Array.isArray(parsed.assignments)) {
+          // Find nearest deadline
+          const now = new Date();
+          const pendingWithDue = parsed.assignments.filter(
+            (a: { status: string; due?: string }) =>
+              a.status !== "Graded" && a.due && new Date(a.due) > now,
+          );
+          pendingWithDue.sort(
+            (a: { due: string }, b: { due: string }) =>
+              new Date(a.due).getTime() - new Date(b.due).getTime(),
+          );
+
+          const nearestDeadline = pendingWithDue[0];
+          if (nearestDeadline?.due) {
+            const dueDate = new Date(nearestDeadline.due);
+            const diffMs = dueDate.getTime() - now.getTime();
+            const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+            const diffHours = Math.floor(
+              (diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60),
+            );
+
+            let timeLeft = "";
+            if (diffDays > 0) {
+              timeLeft = `${diffDays} day${diffDays > 1 ? "s" : ""} ${diffHours}h`;
+            } else if (diffHours > 0) {
+              timeLeft = `${diffHours} hour${diffHours > 1 ? "s" : ""}`;
+            } else {
+              timeLeft = "Less than 1 hour";
+            }
+
+            return {
+              assignment: nearestDeadline.name,
+              course: nearestDeadline.courseName,
+              timeLeft,
+              dueDate: nearestDeadline.due,
+            };
+          }
         }
       }
     } catch {

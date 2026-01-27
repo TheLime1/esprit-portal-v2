@@ -191,6 +191,12 @@ export default function LoginPage() {
             if (response?.success && response.data) {
               console.log("✅ Login response data:", response.data);
 
+              // IMPORTANT: Save the extensionId so other pages can communicate with extension
+              if (extensionId) {
+                localStorage.setItem("extensionId", extensionId);
+                console.log("✅ extensionId saved:", extensionId);
+              }
+
               // Store user data in localStorage for the dashboard
               const userData = {
                 id: response.data.id || studentId,

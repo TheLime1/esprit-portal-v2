@@ -57,13 +57,63 @@ export default function HomeworkPage() {
   const [filter, setFilter] = useState<"all" | "pending" | "graded">("all");
 
   // Check localStorage for cached assignments first (instant)
+  // Checks both esprit_bb_assignments and esprit_bb_session as fallback
   const checkLocalStorage = useCallback(() => {
     try {
+      // Debug: log what keys exist
+      console.log("🔍 Checking localStorage for BB data...");
+      console.log(
+        "  - esprit_bb_assignments:",
+        localStorage.getItem("esprit_bb_assignments") ? "exists" : "missing",
+      );
+      console.log(
+        "  - esprit_bb_session:",
+        localStorage.getItem("esprit_bb_session") ? "exists" : "missing",
+      );
+      console.log(
+        "  - extensionId:",
+        localStorage.getItem("extensionId") || "missing",
+      );
+
+      // First try the dedicated assignments cache
       const cachedBBData = localStorage.getItem("esprit_bb_assignments");
       if (cachedBBData) {
         const parsed = JSON.parse(cachedBBData);
-        if (parsed.assignments && Array.isArray(parsed.assignments)) {
+        if (
+          parsed.assignments &&
+          Array.isArray(parsed.assignments) &&
+          parsed.assignments.length > 0
+        ) {
+          console.log(
+            "✅ Found assignments in esprit_bb_assignments:",
+            parsed.assignments.length,
+          );
           return parsed as AssignmentsResponse;
+        }
+      }
+
+      // Fallback: try esprit_bb_session which contains all BB data
+      const cachedSession = localStorage.getItem("esprit_bb_session");
+      if (cachedSession) {
+        const parsed = JSON.parse(cachedSession);
+        if (
+          parsed.assignments &&
+          Array.isArray(parsed.assignments) &&
+          parsed.assignments.length > 0
+        ) {
+          console.log(
+            "✅ Found assignments in esprit_bb_session:",
+            parsed.assignments.length,
+          );
+          return {
+            success: true,
+            assignments: parsed.assignments,
+            deadlineAlert: null,
+            total: parsed.assignments.length,
+            pending: parsed.assignments.filter(
+              (a: Assignment) => a.status !== "Graded",
+            ).length,
+          } as AssignmentsResponse;
         }
       }
     } catch {
@@ -72,11 +122,65 @@ export default function HomeworkPage() {
     return null;
   }, []);
 
+  // Try to fetch and cache full BB data from extension
+  const fetchAndCacheFullBBData = useCallback((extensionId: string) => {
+    return new Promise<void>((resolve) => {
+      chrome.runtime.sendMessage(
+        extensionId,
+        { action: "GET_BB_STATUS" },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (response: any) => {
+          if (chrome.runtime.lastError || !response?.connected) {
+            resolve();
+            return;
+          }
+
+          // Cache full BB data to localStorage
+          if (response.user) {
+            const sessionData = {
+              user: response.user,
+              courses: response.courses || [],
+              assignments: response.assignments || [],
+              attendance: response.attendance || [],
+              attendanceStats: response.attendanceStats,
+              savedAt: response.lastSync || new Date().toISOString(),
+            };
+            localStorage.setItem(
+              "esprit_bb_session",
+              JSON.stringify(sessionData),
+            );
+            console.log("✅ Cached full BB data to esprit_bb_session");
+
+            // Also cache assignments separately
+            if (response.assignments && response.assignments.length > 0) {
+              const assignmentsData = {
+                success: true,
+                assignments: response.assignments,
+                deadlineAlert: null,
+                total: response.assignments.length,
+                pending: response.assignments.filter(
+                  (a: Assignment) => a.status !== "Graded",
+                ).length,
+              };
+              localStorage.setItem(
+                "esprit_bb_assignments",
+                JSON.stringify(assignmentsData),
+              );
+              console.log("✅ Cached assignments to esprit_bb_assignments");
+            }
+          }
+          resolve();
+        },
+      );
+    });
+  }, []);
+
   const fetchAssignments = useCallback(async () => {
     // First, show cached data instantly
-    const cachedData = checkLocalStorage();
+    let cachedData = checkLocalStorage();
     if (cachedData) {
       setData(cachedData);
+      setError(null); // Clear any previous error since we have cached data
       setLoading(false);
     }
 
@@ -85,6 +189,7 @@ export default function HomeworkPage() {
       const extensionId = localStorage.getItem("extensionId");
 
       if (!extensionId) {
+        // No extension ID - can only show cached data
         if (!cachedData) {
           setError(
             "Extension not connected. Please log in first to connect the extension.",
@@ -94,7 +199,8 @@ export default function HomeworkPage() {
         return;
       }
 
-      if (typeof chrome === "undefined" || !chrome.runtime) {
+      if (chrome === undefined || !chrome.runtime) {
+        // Chrome API not available - can only show cached data
         if (!cachedData) {
           setError(
             "Chrome extension API not available. Please use Chrome browser.",
@@ -102,6 +208,19 @@ export default function HomeworkPage() {
         }
         setLoading(false);
         return;
+      }
+
+      // If no cached data, try to fetch and cache full BB data first
+      if (!cachedData) {
+        await fetchAndCacheFullBBData(extensionId);
+        // Check localStorage again after fetching
+        cachedData = checkLocalStorage();
+        if (cachedData) {
+          setData(cachedData);
+          setError(null);
+          setLoading(false);
+          return;
+        }
       }
 
       // Ask extension for assignments from local storage (may have fresher data)
@@ -135,6 +254,18 @@ export default function HomeworkPage() {
             JSON.stringify(response),
           );
 
+          // Also update esprit_bb_session with assignments for consistency
+          try {
+            const existingSession = localStorage.getItem("esprit_bb_session");
+            if (existingSession) {
+              const parsed = JSON.parse(existingSession);
+              parsed.assignments = response.assignments;
+              localStorage.setItem("esprit_bb_session", JSON.stringify(parsed));
+            }
+          } catch {
+            // Ignore errors
+          }
+
           setLoading(false);
         },
       );
@@ -144,7 +275,7 @@ export default function HomeworkPage() {
       }
       setLoading(false);
     }
-  }, [checkLocalStorage]);
+  }, [checkLocalStorage, fetchAndCacheFullBBData]);
 
   useEffect(() => {
     fetchAssignments();

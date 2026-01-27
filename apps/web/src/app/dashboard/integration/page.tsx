@@ -164,8 +164,9 @@ export default function IntegrationPage() {
     setDisconnecting(true);
     try {
       await fetch("/api/blackboard/sync", { method: "DELETE" });
-      // Clear localStorage cache
+      // Clear all Blackboard localStorage caches
       localStorage.removeItem("esprit_bb_session");
+      localStorage.removeItem("esprit_bb_assignments");
       setBbStatus({ connected: false, user: null, lastSync: null });
     } catch (error) {
       console.error("Error disconnecting:", error);
