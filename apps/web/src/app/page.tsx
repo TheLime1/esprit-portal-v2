@@ -24,8 +24,8 @@ function isDataStale(timestamp: string | undefined): boolean {
 
 // Extension IDs - production and common dev IDs
 const EXTENSION_IDS = [
-  "ecoohmcojdcogincjmomppjjhddlfcjj", // Production (Chrome Web Store)
-  // Add your dev extension ID here if different
+  "ecoohmcojdcogincjmomppjjhddlfcjj", // DEV
+  "adjhhmneffipghlajccajepgdfjbinom", // Production
 ];
 
 // Check if extension is installed and return the working extension ID

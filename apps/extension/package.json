@@ -1,9 +1,10 @@
 {
-  "name": "esprit-extension",
-  "displayName": "Esprit Extension",
-  "version": "0.0.1",
-  "description": "Esprit Portal browser extension.",
-  "author": "EspritAds",
+  "name": "espritads-portal",
+  "displayName": "ESPRIT@ds Portal",
+  "version": "1.0.0",
+  "description": "Unofficial student portal extension for ESPRIT University. Access your grades, credits, schedules, and Blackboard integration in one place.",
+  "author": "ESPRIT@ds Team",
+  "homepage": "https://portal.espritads.site",
   "scripts": {
     "dev": "plasmo dev",
     "build": "plasmo build",
@@ -29,6 +30,8 @@
     "typescript": "5.3.3"
   },
   "manifest": {
+    "name": "ESPRIT@ds Portal",
+    "short_name": "ESPRIT@ds",
     "host_permissions": [
       "https://esprit-tn.com/*",
       "https://*.esprit-tn.com/*",
