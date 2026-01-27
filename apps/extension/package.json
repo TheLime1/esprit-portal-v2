@@ -3,7 +3,7 @@
   "displayName": "Esprit Extension",
   "version": "0.0.1",
   "description": "Esprit Portal browser extension.",
-  "author": "Esprit Team",
+  "author": "EspritAds",
   "scripts": {
     "dev": "plasmo dev",
     "build": "plasmo build",

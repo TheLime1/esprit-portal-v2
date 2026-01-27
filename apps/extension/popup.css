@@ -1,79 +1,80 @@
+/* Theme colors matching web project */
+:root {
+  --primary: #e54c2e;
+  --primary-hover: #d13d20;
+  --background: #0f0f10;
+  --foreground: #fafafa;
+  --card: #1a1a1c;
+  --muted: #a1a1aa;
+  --border: rgba(255, 255, 255, 0.1);
+}
+
 .popup-container {
-  width: 400px;
-  min-height: 300px;
-  padding: 20px;
-  font-family: system-ui, -apple-system, sans-serif;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-}
-
-h2 {
-  margin: 0 0 20px 0;
-  font-size: 24px;
-  font-weight: 700;
-}
-
-h3 {
-  margin: 0 0 10px 0;
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.loading {
+  width: 280px;
+  padding: 24px;
+  font-family:
+    "Segoe UI",
+    system-ui,
+    -apple-system,
+    sans-serif;
+  background: var(--background);
+  color: var(--foreground);
   text-align: center;
-  padding: 40px;
-  font-size: 18px;
 }
 
-.info-section {
-  background: rgba(255, 255, 255, 0.1);
-  padding: 12px;
-  border-radius: 8px;
-  margin-bottom: 12px;
+.popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 
-.info-section pre {
-  background: rgba(0, 0, 0, 0.2);
-  padding: 10px;
-  border-radius: 4px;
-  overflow-x: auto;
-  font-size: 12px;
-  max-height: 200px;
-  overflow-y: auto;
+.popup-logo {
+  font-size: 28px;
 }
 
-.label {
-  font-size: 12px;
-  opacity: 0.8;
-  margin: 0 0 4px 0;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.value {
-  font-size: 16px;
-  font-weight: 600;
+.popup-title {
   margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--foreground);
 }
 
-.refresh-btn {
+.popup-subtitle {
+  margin: 0 0 20px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.portal-btn {
   width: 100%;
-  background: rgba(255, 255, 255, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--primary);
   border: none;
-  padding: 12px;
-  border-radius: 8px;
+  padding: 14px 20px;
+  border-radius: 10px;
   color: white;
   cursor: pointer;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
-  transition: all 0.2s;
-  margin-top: 12px;
+  transition: all 0.2s ease;
 }
 
-.refresh-btn:hover {
-  background: rgba(255, 255, 255, 0.3);
+.portal-btn:hover {
+  background: var(--primary-hover);
+  transform: translateY(-1px);
 }
 
-.refresh-btn:active {
-  transform: scale(0.98);
+.portal-btn:active {
+  transform: translateY(0);
+}
+
+.arrow-icon {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2.5;
 }

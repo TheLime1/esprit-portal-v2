@@ -2,6 +2,7 @@
   "name": "ESPRIT Portal",
   "short_name": "ESPRIT",
   "description": "Student Portal for ESPRIT University",
+  "author": "EspritAds",
   "icons": [
     {
       "src": "/android-chrome-192x192.png",

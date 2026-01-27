@@ -1,73 +1,27 @@
-import { useEffect, useState } from "react"
 import "./popup.css"
 
-interface StudentData {
-  id: string
-  profile: any
-  grades: any[]
-  lastFetched: string
-}
-
 function IndexPopup() {
-  const [studentData, setStudentData] = useState<StudentData | null>(null)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    loadStudentData()
-  }, [])
-
-  const loadStudentData = async () => {
-    try {
-      const result = await chrome.storage.local.get(["studentData"])
-      if (result.studentData) {
-        setStudentData(result.studentData)
-        console.log("Student data:", result.studentData)
-      }
-    } catch (error) {
-      console.error("Error loading student data:", error)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  if (loading) {
-    return (
-      <div className="popup-container">
-        <div className="loading">Loading...</div>
-      </div>
-    )
-  }
-
-  if (!studentData) {
-    return (
-      <div className="popup-container">
-        <h2>Esprit Extension</h2>
-        <p>No student data found. Please login from the web app.</p>
-      </div>
-    )
+  const handleOpenPortal = () => {
+    chrome.tabs.create({ url: "https://portal.espritads.site" })
   }
 
   return (
     <div className="popup-container">
-      <h2>🎓 Esprit Student Info</h2>
-      
-      <div className="info-section">
-        <h3>Profile Data (Debug)</h3>
-        <pre>{JSON.stringify(studentData.profile, null, 2)}</pre>
+      <div className="popup-header">
+        <span className="popup-logo">🎓</span>
+        <h1 className="popup-title">ESPRIT Portal</h1>
       </div>
-
-      <div className="info-section">
-        <p className="label">Student ID</p>
-        <p className="value">{studentData.id}</p>
-      </div>
-
-      <div className="info-section">
-        <p className="label">Last Updated</p>
-        <p className="value">{new Date(studentData.lastFetched).toLocaleString()}</p>
-      </div>
-
-      <button onClick={loadStudentData} className="refresh-btn">
-        🔄 Refresh
+      <p className="popup-subtitle">Your modern student dashboard</p>
+      <button onClick={handleOpenPortal} className="portal-btn">
+        Open Portal
+        <svg
+          className="arrow-icon"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2">
+          <path d="M5 12h14M12 5l7 7-7 7" />
+        </svg>
       </button>
     </div>
   )
