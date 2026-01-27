@@ -8,3 +8,4 @@ export { GradesRanking } from "./grades-ranking";
 export { FindRoom } from "./find-room";
 export { UpcomingEvents } from "./upcoming-events";
 export { AttendanceChart } from "./attendance-chart";
+export { AccountIssueCard } from "./account-issue-card";

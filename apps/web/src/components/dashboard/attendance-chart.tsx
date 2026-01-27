@@ -2,9 +2,11 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { ChartContainer, ChartTooltipContent } from "@/components/ui/chart";
-import { Loader2, AlertCircle, UserCheck } from "lucide-react";
+import { Loader2, AlertCircle, UserCheck, Link2 } from "lucide-react";
+import Link from "next/link";
 
 // Chrome extension types
 declare const chrome: {
@@ -147,8 +149,42 @@ export function AttendanceChart() {
           </CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col justify-center items-center h-[200px] text-muted-foreground">
-          <AlertCircle className="h-8 w-8 mb-2" />
-          <p className="text-sm text-center">{error || "No attendance data"}</p>
+          <Link2 className="h-8 w-8 mb-2" />
+          <p className="text-sm text-center mb-3">
+            Connect Blackboard to see your attendance
+          </p>
+          <Button asChild size="sm">
+            <Link href="/dashboard/integration">
+              <Link2 className="h-4 w-4 mr-2" />
+              Connect Blackboard
+            </Link>
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // Show integration prompt if no attendance data (total is 0)
+  if (stats.total === 0) {
+    return (
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-lg font-bold flex items-center gap-2">
+            <UserCheck className="h-5 w-5 text-primary" />
+            Attendance
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col justify-center items-center h-[200px] text-muted-foreground">
+          <Link2 className="h-8 w-8 mb-2" />
+          <p className="text-sm text-center mb-3">
+            No attendance data found. Connect Blackboard to sync.
+          </p>
+          <Button asChild size="sm">
+            <Link href="/dashboard/integration">
+              <Link2 className="h-4 w-4 mr-2" />
+              Connect Blackboard
+            </Link>
+          </Button>
         </CardContent>
       </Card>
     );

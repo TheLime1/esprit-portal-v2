@@ -208,8 +208,12 @@ export default function IntegrationPage() {
           <CardHeader>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center">
-                  <BookOpen className="h-6 w-6 text-white" />
+                <div className="w-12 h-12 rounded-lg overflow-hidden">
+                  <img
+                    src="/blackboard.jpeg"
+                    alt="Blackboard"
+                    className="w-full h-full object-cover"
+                  />
                 </div>
                 <div>
                   <CardTitle className="text-xl">Blackboard</CardTitle>

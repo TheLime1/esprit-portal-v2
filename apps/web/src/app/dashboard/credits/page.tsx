@@ -134,8 +134,24 @@ export default function CreditsPage() {
   const [creditsData, setCreditsData] = useState<CreditsData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isUsingMockData, setIsUsingMockData] = useState(false);
+  const [accountIssue, setAccountIssue] = useState<string | null>(null);
 
   useEffect(() => {
+    // Check for account issue first
+    const storedUser = localStorage.getItem("esprit_user");
+    if (storedUser) {
+      try {
+        const userData = JSON.parse(storedUser);
+        if (userData.accountIssue) {
+          setAccountIssue(userData.accountIssue);
+          setIsLoading(false);
+          return;
+        }
+      } catch {
+        // Ignore parse errors
+      }
+    }
+
     const loadCreditsFromStorage = () => {
       setIsLoading(true);
 
@@ -253,6 +269,38 @@ export default function CreditsPage() {
         <div className="flex flex-col items-center gap-4">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
           <p className="text-muted-foreground">Loading credits...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show access denied for accounts with issues
+  if (accountIssue) {
+    return (
+      <div className="p-8">
+        <div className="max-w-4xl mx-auto">
+          <Card className="border-2 border-yellow-200 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/20">
+            <CardHeader>
+              <CardTitle className="text-lg font-bold flex items-center gap-2 text-yellow-600 dark:text-yellow-400">
+                <AlertCircle className="h-5 w-5" />
+                Credits Unavailable
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-muted-foreground mb-4">
+                Your credit history cannot be accessed due to an account
+                restriction.
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {accountIssue === "payment" &&
+                  "Please proceed with payment of your tuition fees to access your credits."}
+                {accountIssue === "admin" &&
+                  "Please contact the student services department to regularize your administrative situation."}
+                {accountIssue === "dossier" &&
+                  "Please submit your physical dossier to the administration to access your credits."}
+              </p>
+            </CardContent>
+          </Card>
         </div>
       </div>
     );

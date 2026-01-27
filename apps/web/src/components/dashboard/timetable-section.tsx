@@ -114,7 +114,11 @@ function extractClassName(rawClassName: string): string {
   return parts[0].trim();
 }
 
-export function TimetableSection() {
+interface TimetableSectionProps {
+  refreshKey?: number;
+}
+
+export function TimetableSection({ refreshKey = 0 }: TimetableSectionProps) {
   const [timetableData, setTimetableData] = useState<TimetableData | null>(
     null,
   );
@@ -137,7 +141,7 @@ export function TimetableSection() {
 
         const userData = JSON.parse(storedUser);
         if (!userData.className) {
-          setError("Class information not available");
+          setError("Set your class above to view your timetable");
           setLoading(false);
           return;
         }
@@ -165,7 +169,7 @@ export function TimetableSection() {
     };
 
     fetchTimetable();
-  }, []);
+  }, [refreshKey]);
 
   const getTimetableItems = (): TimetableItem[] => {
     if (!timetableData?.fullSchedule) return [];

@@ -18,8 +18,8 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js"
 const SUPABASE_URL = process.env.PLASMO_PUBLIC_SUPABASE_URL!
 const SUPABASE_ANON_KEY = process.env.PLASMO_PUBLIC_SUPABASE_ANON_KEY!
 
-// Cache duration in hours
-export const CACHE_DURATION_HOURS = 4
+// Cache duration in hours (0.5 = 30 minutes)
+export const CACHE_DURATION_HOURS = 0.5
 
 // ============================================================================
 // Types for Supabase data
@@ -30,8 +30,13 @@ export interface StudentRow {
   class_name: string | null
   grades_data: GradesData | null
   credits_data: Credit[] | null
+  account_issue: AccountIssueType | null
+  manual_class: string | null
   updated_at: string
 }
+
+// Account issue types for students with platform restrictions
+export type AccountIssueType = 'payment' | 'admin' | 'dossier' | null
 
 export interface GradesData {
   regularGrades: Grade[] | null

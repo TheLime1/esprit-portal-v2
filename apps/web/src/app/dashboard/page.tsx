@@ -9,11 +9,14 @@ import {
   FindRoom,
   UpcomingEvents,
   AttendanceChart,
+  AccountIssueCard,
 } from "@/components/dashboard";
 
 interface UserData {
   name: string;
   className: string;
+  accountIssue?: "payment" | "admin" | "dossier" | null;
+  accountIssueMessage?: string;
 }
 
 interface DeadlineAlert {
@@ -28,6 +31,7 @@ export default function DashboardPage() {
   const [deadlineAlert, setDeadlineAlert] = useState<DeadlineAlert | null>(
     null,
   );
+  const [timetableRefreshKey, setTimetableRefreshKey] = useState(0);
 
   // Check localStorage for cached deadline alert first
   // Checks both esprit_bb_assignments and esprit_bb_session as fallback
@@ -148,16 +152,28 @@ export default function DashboardPage() {
     day: "numeric",
   });
 
-  // Build alert message
+  // Build alert message - only show when we have actual data
   const alertMessage = deadlineAlert
     ? `📚 "${deadlineAlert.assignment}" due in`
-    : "Example alert for blackboard";
+    : null;
   const alertTimeLeft = deadlineAlert?.timeLeft || "";
+
+  // Check if user has account issue
+  const hasAccountIssue = userData?.accountIssue != null;
 
   return (
     <>
-      {/* Alert Banner */}
-      <AlertBanner message={alertMessage} timeLeft={alertTimeLeft} />
+      {/* Alert Banner - only show deadline alert if no account issue */}
+      {!hasAccountIssue && alertMessage && (
+        <AlertBanner message={alertMessage} timeLeft={alertTimeLeft} />
+      )}
+      {/* Show integration prompt if no deadline and no account issue */}
+      {!hasAccountIssue && !alertMessage && (
+        <AlertBanner
+          message="Connect Blackboard to see your homework deadlines"
+          variant="integration"
+        />
+      )}
 
       {/* Content */}
       <div className="p-8">
@@ -165,12 +181,28 @@ export default function DashboardPage() {
           {/* Page Header */}
           <Header userName={firstName} date={dateString} />
 
+          {/* Account Issue Card - show prominently if user has issue */}
+          {hasAccountIssue && userData?.accountIssue && (
+            <AccountIssueCard
+              issueType={userData.accountIssue}
+              issueMessage={userData.accountIssueMessage}
+              onClassSet={(newClass) => {
+                // Update local state so timetable can refresh
+                setUserData((prev) =>
+                  prev ? { ...prev, className: newClass } : null,
+                );
+                // Trigger timetable refetch
+                setTimetableRefreshKey((prev) => prev + 1);
+              }}
+            />
+          )}
+
           {/* Dashboard Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Left Column (Wide) */}
             <div className="lg:col-span-2 space-y-6">
               {/* Timeline / Schedule */}
-              <TimetableSection />
+              <TimetableSection refreshKey={timetableRefreshKey} />
 
               {/* Professor Rating Section */}
               <ProfessorRating />

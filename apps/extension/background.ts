@@ -33,7 +33,74 @@ import {
   type BBAssignmentRow,
   type BBAttendanceRow,
   type BBAttendanceStats,
+  type AccountIssueType,
 } from "./supabase-client"
+
+// ============================================================================
+// Account Issue Error Messages (from esprit-py v0.7.1)
+// ============================================================================
+const ACCOUNT_ISSUE_PATTERNS = {
+  payment: ["paiement", "frais"],
+  admin: ["régulariser", "situation administrative"],
+  dossier: ["dossier physique"],
+} as const
+
+/**
+ * Extract JavaScript alert message from HTML
+ * Handles multiple quote types including typographic quotes
+ */
+function extractJsAlert(html: string): string | null {
+  // Match patterns like: alert('message') or alert("message")
+  // Also handle typographic quotes: ' ' " "
+  const pattern = /alert\(['"'\u2018\u2019\u201C\u201D](.+?)['"'\u2018\u2019\u201C\u201D]\)/i
+  const match = html.match(pattern)
+  return match ? match[1] : null
+}
+
+/**
+ * Check for custom account errors (payment, admin, dossier issues)
+ * Returns the error type if detected, null otherwise
+ */
+function checkAccountIssueErrors(html: string): { hasError: boolean; errorType: AccountIssueType; message: string | null } {
+  const alertMessage = extractJsAlert(html)
+  if (!alertMessage) {
+    return { hasError: false, errorType: null, message: null }
+  }
+
+  const normalizedMessage = alertMessage.toLowerCase().replace(/\s+/g, ' ').trim()
+
+  // Check for payment error (must have both "paiement" and "frais")
+  if (normalizedMessage.includes("paiement") && normalizedMessage.includes("frais")) {
+    return { hasError: true, errorType: 'payment', message: alertMessage }
+  }
+
+  // Check for admin error
+  if (normalizedMessage.includes("régulariser") || normalizedMessage.includes("situation administrative")) {
+    return { hasError: true, errorType: 'admin', message: alertMessage }
+  }
+
+  // Check for dossier error
+  if (normalizedMessage.includes("dossier physique")) {
+    return { hasError: true, errorType: 'dossier', message: alertMessage }
+  }
+
+  // Unknown alert - might be an error we don't recognize
+  console.warn("Unknown alert message:", alertMessage)
+  return { hasError: false, errorType: null, message: alertMessage }
+}
+
+// ============================================================================
+// Custom Error Classes
+// ============================================================================
+class AccountIssueError extends Error {
+  errorType: AccountIssueType
+  
+  constructor(message: string, errorType: AccountIssueType) {
+    super(message)
+    this.name = 'AccountIssueError'
+    this.errorType = errorType
+  }
+}
 
 // ============================================================================
 // Sync State - Prevent race conditions
@@ -719,6 +786,20 @@ async function handleLogin(credentials: LoginCredentials): Promise<StudentData> 
     html = await suivantResponse.text()
     formData = extractASPNetFormData(html)
 
+    // Check for account issue errors (payment, admin, dossier)
+    const accountIssue = checkAccountIssueErrors(html)
+    if (accountIssue.hasError && accountIssue.errorType) {
+      console.log(`⚠️ Account issue detected: ${accountIssue.errorType}`)
+      console.log(`Message: ${accountIssue.message}`)
+      
+      // Return special error with account issue info
+      // The caller will handle this as a partial login
+      throw new AccountIssueError(
+        accountIssue.message || "Account has restrictions",
+        accountIssue.errorType
+      )
+    }
+
     // Check if ID was incorrect (still on same page without password field)
     const passwordFieldName = findInputNameByPattern(html, ["textbox7"])
     const idFieldStillPresent = findInputNameByPattern(html, ["textbox3"])
@@ -1087,6 +1168,43 @@ chrome.runtime.onMessageExternal.addListener(
           safeSendResponse(sendResponse, { success: true, data: result, source: "portal" })
         } catch (error) {
           espritSyncInProgress = false
+          
+          // Handle account issue errors specially
+          if (error instanceof AccountIssueError) {
+            console.log(`⚠️ Account issue login for ${request.credentials.id}: ${error.errorType}`)
+            
+            // Save minimal student data with account issue flag
+            const accountIssueData = {
+              id: request.credentials.id,
+              name: null,
+              className: null, // Will be set manually by user
+              grades: null,
+              lastFetched: new Date().toISOString(),
+              accountIssue: error.errorType,
+              accountIssueMessage: error.message,
+            }
+            
+            await chrome.storage.local.set({
+              studentData: accountIssueData,
+              allGrades: null,
+              credits: null,
+              cacheTimestamp: new Date().toISOString(),
+            })
+            
+            // Save credentials for Blackboard sync
+            await saveCachedCredentials(request.credentials.id, request.credentials.password)
+            
+            // Return success but with accountIssue flag
+            safeSendResponse(sendResponse, { 
+              success: true, 
+              data: accountIssueData,
+              source: "portal",
+              accountIssue: error.errorType,
+              accountIssueMessage: error.message,
+            })
+            return
+          }
+          
           safeSendResponse(sendResponse, { success: false, error: error.message })
         }
       })()
@@ -1134,6 +1252,48 @@ chrome.runtime.onMessageExternal.addListener(
           }
         })
         .catch(error => safeSendResponse(sendResponse, { success: false, error: error.message }))
+      return true
+    }
+
+    // Set manual class for accounts with issues
+    if (request.action === "SET_MANUAL_CLASS") {
+      const { className } = request
+      
+      chrome.storage.local.get(["studentData"])
+        .then(async (result) => {
+          if (result.studentData) {
+            // Update studentData with the manual class
+            const updatedData = {
+              ...result.studentData,
+              className: className,
+              manualClass: className,
+            }
+            
+            await chrome.storage.local.set({ studentData: updatedData })
+            console.log(`📝 Manual class set to: ${className}`)
+            
+            safeSendResponse(sendResponse, { success: true, data: updatedData })
+          } else {
+            safeSendResponse(sendResponse, { success: false, error: "No student data found. Please login first." })
+          }
+        })
+        .catch(error => safeSendResponse(sendResponse, { success: false, error: error.message }))
+      return true
+    }
+
+    // Logout - clear all extension storage
+    if (request.action === "LOGOUT") {
+      console.log("🚪 Logging out - clearing all extension storage...")
+      
+      chrome.storage.local.clear()
+        .then(() => {
+          console.log("✅ Extension storage cleared")
+          safeSendResponse(sendResponse, { success: true })
+        })
+        .catch(error => {
+          console.error("❌ Failed to clear storage:", error)
+          safeSendResponse(sendResponse, { success: false, error: error.message })
+        })
       return true
     }
 

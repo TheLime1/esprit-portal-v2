@@ -40,22 +40,36 @@ export function Sidebar({ userName, className }: SidebarProps) {
   const pathname = usePathname();
   const { theme, toggleTheme } = useTheme();
 
-  // Generate initials from user name
+  // Generate initials from user name (handle null/empty names for accounts with issues)
   const initials = userName
-    .split(" ")
-    .map((n) => n[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
+    ? userName
+        .split(" ")
+        .map((n) => n[0])
+        .join("")
+        .toUpperCase()
+        .slice(0, 2)
+    : "??";
 
   const handleLogout = () => {
-    // Clear all Esprit data from localStorage
-    localStorage.removeItem("esprit_user");
-    localStorage.removeItem("esprit_student_data");
-    localStorage.removeItem("esprit_grades");
-    localStorage.removeItem("esprit_credits");
-    localStorage.removeItem("esprit_bb_session");
-    localStorage.removeItem("esprit_bb_assignments");
+    // Signal extension to clear its storage
+    const extensionId = localStorage.getItem("extensionId");
+    if (extensionId && typeof chrome !== "undefined" && chrome.runtime) {
+      chrome.runtime.sendMessage(extensionId, { action: "LOGOUT" }, () => {
+        // Ignore response/errors - extension might not be available
+        if (chrome.runtime.lastError) {
+          console.log(
+            "Extension logout signal failed (extension may be unavailable)",
+          );
+        } else {
+          console.log("✅ Extension storage cleared");
+        }
+      });
+    }
+
+    // Clear all web app localStorage
+    localStorage.clear();
+
+    // Redirect to login
     window.location.href = "/";
   };
 

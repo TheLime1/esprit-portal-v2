@@ -164,7 +164,15 @@ export async function GET(req: NextRequest) {
         }
 
         // Get unique building letters for the building selector
-        const buildings = Array.from(new Set(rooms.map(r => r.charAt(0).toUpperCase()))).sort();
+        // Merge I, J, K into a single IJK option
+        const rawBuildings = Array.from(new Set(rooms.map(r => r.charAt(0).toUpperCase())));
+        const hasI = rawBuildings.includes('I');
+        const hasJ = rawBuildings.includes('J');
+        const hasK = rawBuildings.includes('K');
+        const buildings = rawBuildings
+            .filter(b => !['I', 'J', 'K'].includes(b))
+            .concat(hasI || hasJ || hasK ? ['IJK'] : [])
+            .sort((a, b) => a.localeCompare(b));
 
         return NextResponse.json({ days, rooms, buildings, occupied: occupiedArr, empty, warning });
     } catch (err: unknown) {

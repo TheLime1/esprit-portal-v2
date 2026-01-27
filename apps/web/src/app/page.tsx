@@ -197,6 +197,34 @@ export default function LoginPage() {
                 console.log("✅ extensionId saved:", extensionId);
               }
 
+              // Check if this is an account with issues (payment, admin, dossier)
+              if (response.accountIssue) {
+                console.log(
+                  "⚠️ Account issue detected:",
+                  response.accountIssue,
+                );
+                console.log("Message:", response.accountIssueMessage);
+
+                // Store user data with issue flag
+                const userData = {
+                  id: response.data.id || studentId,
+                  name: null,
+                  className: null,
+                  accountIssue: response.accountIssue,
+                  accountIssueMessage: response.accountIssueMessage,
+                };
+                localStorage.setItem("esprit_user", JSON.stringify(userData));
+                console.log(
+                  "✅ esprit_user saved with account issue:",
+                  userData,
+                );
+
+                // Navigate to dashboard - the dashboard will show manual class entry
+                router.push("/dashboard");
+                setIsLoading(false);
+                return;
+              }
+
               // Store user data in localStorage for the dashboard
               const userData = {
                 id: response.data.id || studentId,
