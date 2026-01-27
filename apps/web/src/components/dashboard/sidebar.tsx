@@ -17,6 +17,8 @@ import {
   Moon,
   Sun,
   Award,
+  Link2,
+  ClipboardList,
 } from "lucide-react";
 
 const navItems = [
@@ -25,8 +27,10 @@ const navItems = [
   { icon: Award, label: "Credits", href: "/dashboard/credits" },
   { icon: Calendar, label: "Schedule", href: "/dashboard/schedule" },
   { icon: BookOpen, label: "Courses", href: "/dashboard/courses" },
+  { icon: ClipboardList, label: "Homework", href: "/dashboard/homework" },
   { icon: Briefcase, label: "Internships", href: "/dashboard/internships" },
   { icon: Users, label: "Clubs", href: "/dashboard/clubs" },
+  { icon: Link2, label: "Integration", href: "/dashboard/integration" },
 ];
 
 interface SidebarProps {
@@ -47,7 +51,13 @@ export function Sidebar({ userName, className }: SidebarProps) {
     .slice(0, 2);
 
   const handleLogout = () => {
+    // Clear all Esprit data from localStorage
     localStorage.removeItem("esprit_user");
+    localStorage.removeItem("esprit_student_data");
+    localStorage.removeItem("esprit_grades");
+    localStorage.removeItem("esprit_credits");
+    localStorage.removeItem("esprit_bb_session");
+    localStorage.removeItem("esprit_bb_assignments");
     window.location.href = "/";
   };
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
   AlertBanner,
   Header,
@@ -15,8 +15,66 @@ interface UserData {
   className: string;
 }
 
+interface DeadlineAlert {
+  assignment: string;
+  course: string;
+  timeLeft: string;
+  dueDate: string;
+}
+
 export default function DashboardPage() {
   const [userData, setUserData] = useState<UserData | null>(null);
+  const [deadlineAlert, setDeadlineAlert] = useState<DeadlineAlert | null>(
+    null,
+  );
+
+  // Check localStorage for cached deadline alert first
+  const checkLocalStorage = useCallback(() => {
+    try {
+      const cachedAssignments = localStorage.getItem("esprit_bb_assignments");
+      if (cachedAssignments) {
+        const parsed = JSON.parse(cachedAssignments);
+        if (parsed.deadlineAlert) {
+          return parsed.deadlineAlert;
+        }
+      }
+    } catch {
+      // No cached data available, continue with normal flow
+    }
+    return null;
+  }, []);
+
+  const fetchDeadlineAlert = useCallback(async () => {
+    // First check localStorage for cached data (instant)
+    const cachedAlert = checkLocalStorage();
+    if (cachedAlert) {
+      setDeadlineAlert(cachedAlert);
+    }
+
+    // Then try to get fresh data from extension
+    const extensionId = localStorage.getItem("extensionId");
+    if (extensionId && typeof chrome !== "undefined" && chrome.runtime) {
+      chrome.runtime.sendMessage(
+        extensionId,
+        { action: "GET_BB_ASSIGNMENTS" },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (response: any) => {
+          if (
+            !chrome.runtime.lastError &&
+            response?.success &&
+            response.deadlineAlert
+          ) {
+            setDeadlineAlert(response.deadlineAlert);
+            // Cache for next time
+            localStorage.setItem(
+              "esprit_bb_assignments",
+              JSON.stringify(response),
+            );
+          }
+        },
+      );
+    }
+  }, [checkLocalStorage]);
 
   useEffect(() => {
     const storedUser = localStorage.getItem("esprit_user");
@@ -27,7 +85,10 @@ export default function DashboardPage() {
         // Layout handles redirect
       }
     }
-  }, []);
+
+    // Fetch deadline alert from Blackboard
+    fetchDeadlineAlert();
+  }, [fetchDeadlineAlert]);
 
   // Extract first name for the welcome message
   const firstName = userData?.name?.split(" ")[0] || "Student";
@@ -40,10 +101,16 @@ export default function DashboardPage() {
     day: "numeric",
   });
 
+  // Build alert message
+  const alertMessage = deadlineAlert
+    ? `📚 "${deadlineAlert.assignment}" due in`
+    : "Example alert for blackboard";
+  const alertTimeLeft = deadlineAlert?.timeLeft || "";
+
   return (
     <>
       {/* Alert Banner */}
-      <AlertBanner message="Example alert for blackboard" timeLeft="" />
+      <AlertBanner message={alertMessage} timeLeft={alertTimeLeft} />
 
       {/* Content */}
       <div className="p-8">

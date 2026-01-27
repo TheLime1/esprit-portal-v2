@@ -1,15 +1,94 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 
+// Check if cached data is stale (older than 4 hours)
+function isDataStale(timestamp: string | undefined): boolean {
+  if (!timestamp) return true;
+  const fetchedTime = new Date(timestamp).getTime();
+  const now = Date.now();
+  const hoursDiff = (now - fetchedTime) / (1000 * 60 * 60);
+  return hoursDiff >= 4;
+}
+
 export default function LoginPage() {
+  const router = useRouter();
   const [studentId, setStudentId] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [checkingAuth, setCheckingAuth] = useState(true);
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Check for existing login on mount - instant redirect if data exists
+  useEffect(() => {
+    const existingUser = localStorage.getItem("esprit_user");
+    const existingData = localStorage.getItem("esprit_student_data");
+
+    if (existingUser && existingData) {
+      try {
+        const userData = JSON.parse(existingUser);
+        const studentData = JSON.parse(existingData);
+
+        // User is logged in - redirect immediately to dashboard
+        if (userData.id && userData.name) {
+          console.log("✅ User already logged in, redirecting to dashboard...");
+
+          // Check if data is stale and trigger background refresh
+          const lastFetched =
+            studentData.lastFetched || studentData.cacheTimestamp;
+          if (isDataStale(lastFetched)) {
+            console.log("📊 Data is stale, will refresh in background...");
+            triggerBackgroundRefresh();
+          }
+
+          router.replace("/dashboard");
+          return;
+        }
+      } catch {
+        console.log("Invalid stored data, clearing...");
+        localStorage.removeItem("esprit_user");
+        localStorage.removeItem("esprit_student_data");
+      }
+    }
+    setCheckingAuth(false);
+  }, [router]);
+
+  // Trigger background refresh via extension
+  const triggerBackgroundRefresh = () => {
+    const extensionId = localStorage.getItem("extensionId");
+    if (extensionId && typeof chrome !== "undefined" && chrome.runtime) {
+      chrome.runtime.sendMessage(
+        extensionId,
+        { action: "BACKGROUND_REFRESH" },
+        (response: any) => {
+          if (chrome.runtime.lastError) {
+            console.log("Background refresh failed:", chrome.runtime.lastError);
+            return;
+          }
+          if (response?.success && response.data) {
+            // Update localStorage with fresh data
+            localStorage.setItem(
+              "esprit_user",
+              JSON.stringify({
+                id: response.data.id,
+                name: response.data.name,
+                className: response.data.className,
+              }),
+            );
+            localStorage.setItem(
+              "esprit_student_data",
+              JSON.stringify(response.data),
+            );
+            console.log("✅ Background refresh completed");
+          }
+        },
+      );
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -21,7 +100,7 @@ export default function LoginPage() {
       // Get extension ID from environment or localStorage
       let extensionId = process.env.NEXT_PUBLIC_EXTENSION_ID;
 
-      if (typeof window !== "undefined") {
+      if (globalThis.window !== undefined) {
         extensionId = extensionId || localStorage.getItem("extensionId");
       }
 
@@ -77,14 +156,13 @@ export default function LoginPage() {
               // Store data in localStorage for dashboard pages
               if (response.data) {
                 // Store student data
-                localStorage.setItem(
-                  "esprit_user",
-                  JSON.stringify({
-                    id: response.data.id,
-                    name: response.data.name,
-                    className: response.data.className,
-                  }),
-                );
+                const userData = {
+                  id: response.data.id,
+                  name: response.data.name,
+                  className: response.data.className,
+                };
+                localStorage.setItem("esprit_user", JSON.stringify(userData));
+                console.log("✅ esprit_user saved:", userData);
 
                 // Store grades
                 if (response.data.allGrades) {
@@ -92,6 +170,7 @@ export default function LoginPage() {
                     "esprit_grades",
                     JSON.stringify(response.data.allGrades),
                   );
+                  console.log("✅ esprit_grades saved");
                 }
 
                 // Store credits
@@ -101,8 +180,9 @@ export default function LoginPage() {
                     JSON.stringify(response.data.credits),
                   );
                   console.log(
-                    "Credits saved to localStorage:",
-                    response.data.credits,
+                    "✅ esprit_credits saved:",
+                    response.data.credits.length,
+                    "credits",
                   );
                 }
 
@@ -111,6 +191,11 @@ export default function LoginPage() {
                   "esprit_student_data",
                   JSON.stringify(response.data),
                 );
+                console.log("✅ esprit_student_data saved");
+
+                // Redirect to dashboard immediately after successful login
+                console.log("✅ Login successful, redirecting to dashboard...");
+                router.push("/dashboard");
               }
             } else {
               setError(response.error || "Login failed");
@@ -129,6 +214,18 @@ export default function LoginPage() {
       setLoading(false);
     }
   };
+
+  // Show loading while checking if user is already logged in
+  if (checkingAuth) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background p-4">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Checking login status...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">

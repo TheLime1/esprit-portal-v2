@@ -13,16 +13,32 @@
  * Fetch Trigger: Only when user visits esprit-tn.com website
  * 
  * NOTE: Service workers don't have access to DOMParser, so we use regex for HTML parsing.
+ * 
+ * BLACKBOARD INTEGRATION:
+ * - Automatically captures cookies when user logs into Blackboard
+ * - Syncs session data to the web app for homework/course tracking
  */
 
 import {
   getStudentDataFromSupabase,
   upsertStudentDataToSupabase,
+  upsertBlackboardData,
+  getBlackboardDataFromSupabase,
   isDataStale,
+  isNewerTimestamp,
   CACHE_DURATION_HOURS,
   type GradesData,
   type Credit,
+  type BBCourseRow,
+  type BBAssignmentRow,
+  type BBAttendanceRow,
+  type BBAttendanceStats,
 } from "./supabase-client"
+
+// ============================================================================
+// Sync State - Prevent race conditions
+// ============================================================================
+let espritSyncInProgress = false
 
 console.log("Esprit Portal Extension - Ready")
 
@@ -44,6 +60,12 @@ const URLS = {
   CREDITS: "https://esprit-tn.com/ESPOnline/Etudiants/Historique_Cr%C3%A9dit.aspx",
   SCHEDULES: "https://esprit-tn.com/ESPOnline/Etudiants/Emplois.aspx",
 }
+
+// Blackboard Integration Constants
+const BB_DOMAIN = "esprit.blackboard.com"
+const BB_API_V1 = `https://${BB_DOMAIN}/learn/api/public/v1`
+const BB_API_V2 = `https://${BB_DOMAIN}/learn/api/public/v2`
+const WEB_APP_URL = process.env.PLASMO_PUBLIC_WEB_APP_URL || "http://localhost:3000"
 
 // ============================================================================
 // Types
@@ -787,12 +809,14 @@ async function handleLogin(credentials: LoginCredentials): Promise<StudentData> 
     console.log("All grades data:", allGradesData)
 
     // Store in local storage (student data, all grades, and credits separately)
+    const cacheTimestamp = new Date().toISOString()
     await chrome.storage.local.set({
       studentData,
       allGrades: allGradesData,
-      credits: creditsData
+      credits: creditsData,
+      cacheTimestamp, // Explicit timestamp for staleness checks
     })
-    console.log("Data saved to chrome.storage.local (including credits)")
+    console.log(`Data saved to chrome.storage.local at ${cacheTimestamp} (including credits)`)
 
     // Return studentData, allGrades, and credits so web app can store them
     return {
@@ -841,23 +865,75 @@ async function saveCachedCredentials(id: string, password: string): Promise<void
 }
 
 /**
- * Multi-layer cache lookup: localStorage → Supabase → Portal fetch
- * Called when user visits the website and triggers data check
+ * Multi-layer cache lookup with Supabase comparison
+ * Flow:
+ * 1. Return local data instantly (if exists)
+ * 2. Check Supabase in parallel → if newer AND fresh, replace local
+ * 3. If no local, use Supabase
+ * 4. If all stale or missing, trigger portal fetch
  */
 async function getDataWithCaching(studentId: string, password: string): Promise<{
   data: StudentData & { allGrades?: AllGradesData; credits?: Credit[] } | null
   source: "cache" | "supabase" | "portal"
   needsRefresh: boolean
+  supabaseWasNewer?: boolean
 }> {
   // Step 1: Check chrome.storage.local (extension's localStorage equivalent)
   const localResult = await chrome.storage.local.get(["studentData", "allGrades", "credits", "cacheTimestamp"])
   
-  if (localResult.studentData && localResult.studentData.id === studentId) {
-    const cacheTimestamp = localResult.cacheTimestamp || localResult.studentData.lastFetched
-    const isStale = isDataStale(cacheTimestamp)
+  const hasLocalCache = localResult.studentData?.id === studentId
+  const localTimestamp = localResult.cacheTimestamp || localResult.studentData?.lastFetched
+  
+  if (hasLocalCache) {
+    const localIsStale = isDataStale(localTimestamp)
+    console.log(`📦 Local cache found. Stale: ${localIsStale}, Last fetched: ${localTimestamp}`)
     
-    console.log(`Local cache found. Stale: ${isStale}, Last fetched: ${cacheTimestamp}`)
+    // Step 2: Also check Supabase to see if it has newer data
+    console.log("☁️ Checking Supabase for newer data...")
+    const supabaseData = await getStudentDataFromSupabase(studentId, password)
     
+    if (supabaseData && isNewerTimestamp(localTimestamp, supabaseData.updated_at)) {
+      const supabaseIsStale = isDataStale(supabaseData.updated_at)
+      
+      if (!supabaseIsStale) {
+        // Supabase has NEWER and FRESH data - replace local cache
+        console.log(`☁️ Supabase has newer fresh data (${supabaseData.updated_at}), replacing local cache`)
+        
+        const studentData: StudentData = {
+          id: supabaseData.student_id,
+          name: supabaseData.name,
+          className: supabaseData.class_name,
+          grades: supabaseData.grades_data?.regularGrades || null,
+          lastFetched: supabaseData.updated_at,
+        }
+        
+        // Replace local cache with Supabase data
+        await chrome.storage.local.set({
+          studentData,
+          allGrades: supabaseData.grades_data,
+          credits: supabaseData.credits_data,
+          cacheTimestamp: supabaseData.updated_at,
+        })
+        
+        return {
+          data: {
+            ...studentData,
+            allGrades: supabaseData.grades_data as AllGradesData,
+            credits: supabaseData.credits_data as Credit[],
+          },
+          source: "supabase",
+          needsRefresh: false,
+          supabaseWasNewer: true,
+        }
+      } else {
+        // Supabase has newer but STALE data - use local, will need refresh
+        console.log(`☁️ Supabase has newer but stale data, keeping local, needs refresh`)
+      }
+    } else {
+      console.log(`📦 Local cache is up-to-date or newer than Supabase`)
+    }
+    
+    // Return local data (either Supabase wasn't newer, or both are stale)
     return {
       data: {
         ...localResult.studentData,
@@ -865,19 +941,19 @@ async function getDataWithCaching(studentId: string, password: string): Promise<
         credits: localResult.credits,
       },
       source: "cache",
-      needsRefresh: isStale,
+      needsRefresh: localIsStale,
     }
   }
   
-  console.log("No local cache, checking Supabase...")
+  console.log("📦 No local cache, checking Supabase...")
   
-  // Step 2: Check Supabase
+  // Step 3: No local cache - check Supabase
   const supabaseData = await getStudentDataFromSupabase(studentId, password)
   
   if (supabaseData) {
     const isStale = isDataStale(supabaseData.updated_at)
     
-    console.log(`Supabase data found. Stale: ${isStale}, Updated at: ${supabaseData.updated_at}`)
+    console.log(`☁️ Supabase data found. Stale: ${isStale}, Updated at: ${supabaseData.updated_at}`)
     
     // Convert Supabase format to local format
     const studentData: StudentData = {
@@ -907,9 +983,9 @@ async function getDataWithCaching(studentId: string, password: string): Promise<
     }
   }
   
-  console.log("No Supabase data found, will need portal fetch")
+  console.log("📦 No Supabase data found, will need portal fetch")
   
-  // Step 3: No cached data anywhere, needs fresh fetch
+  // Step 4: No cached data anywhere, needs fresh fetch
   return {
     data: null,
     source: "portal",
@@ -928,6 +1004,7 @@ async function syncToSupabase(
   allGrades: AllGradesData | null,
   credits: Credit[] | null
 ): Promise<void> {
+  console.log("🔄 Syncing pending Blackboard data to Supabase...", { studentId, name, className })
   try {
     const success = await upsertStudentDataToSupabase(
       studentId,
@@ -938,10 +1015,12 @@ async function syncToSupabase(
       credits
     )
     if (success) {
-      console.log("Data synced to Supabase successfully")
+      console.log("✅ Data synced to Supabase successfully")
+    } else {
+      console.error("❌ Supabase sync returned false - check RPC function logs")
     }
   } catch (e) {
-    console.error("Failed to sync to Supabase:", e)
+    console.error("❌ Failed to sync to Supabase:", e)
   }
 }
 
@@ -951,24 +1030,66 @@ chrome.runtime.onMessageExternal.addListener(
     console.log("Message received from website:", request)
 
     if (request.action === "LOGIN") {
-      handleLogin(request.credentials)
-        .then(async (result) => {
-          // Save credentials for future cache refreshes
-          await saveCachedCredentials(request.credentials.id, request.credentials.password)
+      (async () => {
+        try {
+          // Prevent concurrent login operations
+          if (espritSyncInProgress) {
+            console.log("⏳ Login already in progress, waiting...")
+            safeSendResponse(sendResponse, { success: false, error: "Login already in progress" })
+            return
+          }
+          espritSyncInProgress = true
           
-          // Sync to Supabase in background
+          const { id, password } = request.credentials
+          
+          // Step 1: Save credentials for future refreshes
+          await saveCachedCredentials(id, password)
+          
+          // Step 2: Check caches first (fastest route)
+          console.log("🔍 Checking caches before login...")
+          const cached = await getDataWithCaching(id, password)
+          
+          if (cached.data && !cached.needsRefresh) {
+            // Fresh data found in cache - no need to fetch from portal
+            console.log(`✅ Fresh data found in ${cached.source}, skipping portal fetch`)
+            
+            // Sync any pending Blackboard data
+            syncPendingBlackboardData(id)
+            
+            espritSyncInProgress = false
+            safeSendResponse(sendResponse, { 
+              success: true, 
+              data: cached.data,
+              source: cached.source,
+              cached: true,
+            })
+            return
+          }
+          
+          // Step 3: Cache is stale or missing - fetch from portal
+          console.log(`🌐 ${cached.data ? "Cache is stale" : "No cache"}, fetching from portal...`)
+          const result = await handleLogin(request.credentials)
+          
+          // Step 4: Sync to Supabase in background
           syncToSupabase(
-            request.credentials.id,
-            request.credentials.password,
+            id,
+            password,
             result.name,
             result.className,
             result.allGrades,
             result.credits
           )
           
-          safeSendResponse(sendResponse, { success: true, data: result })
-        })
-        .catch(error => safeSendResponse(sendResponse, { success: false, error: error.message }))
+          // Sync any pending Blackboard data
+          syncPendingBlackboardData(id)
+          
+          espritSyncInProgress = false
+          safeSendResponse(sendResponse, { success: true, data: result, source: "portal" })
+        } catch (error) {
+          espritSyncInProgress = false
+          safeSendResponse(sendResponse, { success: false, error: error.message })
+        }
+      })()
       return true // Keep the message channel open for async response
     }
 
@@ -1055,33 +1176,64 @@ chrome.runtime.onMessageExternal.addListener(
 
     // New action: Background refresh (called by content script when cache is stale)
     if (request.action === "BACKGROUND_REFRESH") {
-      getCachedCredentials()
-        .then(async (credentials) => {
+      (async () => {
+        try {
+          // Prevent concurrent refresh operations
+          if (espritSyncInProgress) {
+            console.log("⏳ Refresh already in progress, skipping...")
+            safeSendResponse(sendResponse, { success: false, error: "Refresh already in progress", skipped: true })
+            return
+          }
+          espritSyncInProgress = true
+          
+          const credentials = await getCachedCredentials()
           if (!credentials) {
+            espritSyncInProgress = false
             safeSendResponse(sendResponse, { success: false, error: "No cached credentials. Login required." })
             return
           }
           
-          try {
-            // Perform full login and fetch
-            const result = await handleLogin(credentials)
-            
-            // Sync to Supabase
-            await syncToSupabase(
-              credentials.id,
-              credentials.password,
-              result.name,
-              result.className,
-              result.allGrades,
-              result.credits
-            )
-            
-            safeSendResponse(sendResponse, { success: true, data: result })
-          } catch (error) {
-            safeSendResponse(sendResponse, { success: false, error: error.message })
+          // Step 1: Check caches with Supabase comparison
+          console.log("🔍 Checking caches before refresh...")
+          const cached = await getDataWithCaching(credentials.id, credentials.password)
+          
+          if (cached.data && !cached.needsRefresh) {
+            // Fresh data found (possibly updated from Supabase)
+            console.log(`✅ Fresh data found in ${cached.source}${cached.supabaseWasNewer ? " (updated from Supabase)" : ""}, skipping portal fetch`)
+            espritSyncInProgress = false
+            safeSendResponse(sendResponse, {
+              success: true,
+              data: cached.data,
+              source: cached.source,
+              skipped: !cached.supabaseWasNewer,
+              updatedFromSupabase: cached.supabaseWasNewer || false,
+            })
+            return
           }
-        })
-        .catch(error => safeSendResponse(sendResponse, { success: false, error: error.message }))
+          
+          // Step 2: Data is stale - fetch from portal
+          const cacheTimestamp = cached.data?.lastFetched
+          console.log(`🔄 Data is stale (last fetched: ${cacheTimestamp}), fetching from portal...`)
+          
+          const result = await handleLogin(credentials)
+          
+          // Step 3: Sync to Supabase
+          await syncToSupabase(
+            credentials.id,
+            credentials.password,
+            result.name,
+            result.className,
+            result.allGrades,
+            result.credits
+          )
+          
+          espritSyncInProgress = false
+          safeSendResponse(sendResponse, { success: true, data: result, source: "portal" })
+        } catch (error) {
+          espritSyncInProgress = false
+          safeSendResponse(sendResponse, { success: false, error: error.message })
+        }
+      })()
       return true
     }
 
@@ -1108,6 +1260,149 @@ chrome.runtime.onMessageExternal.addListener(
       return true
     }
 
+    // ========================================================================
+    // Blackboard handlers (accessible from web app)
+    // ========================================================================
+    
+    if (request.action === "GET_BB_STATUS") {
+      (async () => {
+        // First check if we have cached data
+        const stored = await chrome.storage.local.get(["bbSession"])
+        
+        if (stored.bbSession?.user) {
+          // Return full data so web app can cache it properly
+          safeSendResponse(sendResponse, {
+            connected: true,
+            user: stored.bbSession.user,
+            courses: stored.bbSession.courses || [],
+            assignments: stored.bbSession.assignments || [],
+            attendance: stored.bbSession.attendance || [],
+            courseCount: stored.bbSession.courses?.length || 0,
+            assignmentCount: stored.bbSession.assignments?.length || 0,
+            attendanceStats: stored.bbSession.attendanceStats || null,
+            lastSync: stored.bbSession.savedAt,
+          })
+          return
+        }
+        
+        // No cached data, check live Blackboard session
+        const isAuth = await isBlackboardAuthenticated()
+        if (!isAuth) {
+          safeSendResponse(sendResponse, { connected: false })
+          return
+        }
+
+        const user = await getBlackboardUser()
+        if (!user) {
+          safeSendResponse(sendResponse, { connected: false })
+          return
+        }
+
+        safeSendResponse(sendResponse, {
+          connected: true,
+          user: {
+            id: user.id,
+            name: `${user.name?.given || ""} ${user.name?.family || ""}`.trim(),
+            username: user.userName,
+            email: user.contact?.email,
+          },
+          courses: [],
+          assignments: [],
+          attendance: [],
+          courseCount: 0,
+          assignmentCount: 0,
+          attendanceStats: null,
+          lastSync: null,
+        })
+      })()
+      return true
+    }
+
+    if (request.action === "SYNC_BB_NOW") {
+      handleBlackboardLogin()
+        .then(() => safeSendResponse(sendResponse, { success: true }))
+        .catch((error) => safeSendResponse(sendResponse, { success: false, error: error.message }))
+      return true
+    }
+
+    if (request.action === "GET_BB_COURSES") {
+      (async () => {
+        const stored = await chrome.storage.local.get(["bbSession"])
+        safeSendResponse(sendResponse, {
+          success: true,
+          courses: stored.bbSession?.courses || [],
+          lastSync: stored.bbSession?.savedAt,
+        })
+      })()
+      return true
+    }
+
+    if (request.action === "GET_BB_ASSIGNMENTS") {
+      (async () => {
+        const stored = await chrome.storage.local.get(["bbSession"])
+        const assignments = stored.bbSession?.assignments || []
+        
+        // Calculate nearest deadline
+        const now = new Date()
+        const pendingWithDue = assignments.filter(
+          (a: BBAssignmentRow) => a.status !== "Graded" && a.due && new Date(a.due) > now
+        )
+        pendingWithDue.sort((a: BBAssignmentRow, b: BBAssignmentRow) => 
+          new Date(a.due!).getTime() - new Date(b.due!).getTime()
+        )
+        
+        const nearestDeadline = pendingWithDue[0] || null
+        let deadlineAlert = null
+
+        if (nearestDeadline?.due) {
+          const dueDate = new Date(nearestDeadline.due)
+          const diffMs = dueDate.getTime() - now.getTime()
+          const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+          const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60))
+          
+          let timeLeft = ""
+          if (diffDays > 0) {
+            timeLeft = `${diffDays} day${diffDays > 1 ? "s" : ""} ${diffHours}h`
+          } else if (diffHours > 0) {
+            timeLeft = `${diffHours} hour${diffHours > 1 ? "s" : ""}`
+          } else {
+            timeLeft = "Less than 1 hour"
+          }
+
+          deadlineAlert = {
+            assignment: nearestDeadline.name,
+            course: nearestDeadline.courseName,
+            timeLeft,
+            dueDate: nearestDeadline.due,
+          }
+        }
+
+        safeSendResponse(sendResponse, {
+          success: true,
+          assignments,
+          deadlineAlert,
+          total: assignments.length,
+          pending: assignments.filter((a: BBAssignmentRow) => a.status !== "Graded").length,
+        })
+      })()
+      return true
+    }
+
+    if (request.action === "GET_BB_FULL_DATA") {
+      (async () => {
+        const stored = await chrome.storage.local.get(["bbSession"])
+        if (!stored.bbSession) {
+          safeSendResponse(sendResponse, { success: false, error: "No Blackboard data cached" })
+          return
+        }
+        safeSendResponse(sendResponse, {
+          success: true,
+          data: stored.bbSession,
+        })
+      })()
+      return true
+    }
+
     return false
   }
 )
@@ -1122,3 +1417,999 @@ chrome.commands.onCommand.addListener((command) => {
   }
 })
 
+// ============================================================================
+// BLACKBOARD INTEGRATION
+// ============================================================================
+
+interface BBCookie {
+  name: string
+  value: string
+  domain: string
+  path: string
+  expirationDate?: number
+}
+
+interface BBUser {
+  id: string
+  userName: string
+  name?: {
+    given: string
+    family: string
+  }
+  contact?: {
+    email: string
+  }
+}
+
+interface BBCourse {
+  id: string
+  courseId: string
+  name: string
+  externalAccessUrl?: string
+}
+
+/**
+ * Get all cookies for the Blackboard domain
+ */
+async function getBlackboardCookies(): Promise<BBCookie[]> {
+  return new Promise((resolve) => {
+    chrome.cookies.getAll({ domain: BB_DOMAIN }, (cookies) => {
+      resolve(
+        cookies.map((c) => ({
+          name: c.name,
+          value: c.value,
+          domain: c.domain,
+          path: c.path,
+          expirationDate: c.expirationDate,
+        }))
+      )
+    })
+  })
+}
+
+/**
+ * Check if user is authenticated with Blackboard
+ */
+async function isBlackboardAuthenticated(): Promise<boolean> {
+  const cookies = await getBlackboardCookies()
+  const hasBbRouter = cookies.some((c) => c.name === "BbRouter")
+  const hasSession = cookies.some((c) => c.name === "JSESSIONID")
+  return hasBbRouter && hasSession
+}
+
+/**
+ * Make authenticated request to Blackboard API
+ */
+async function bbFetch(endpoint: string, version: "v1" | "v2" = "v1"): Promise<Response> {
+  const baseUrl = version === "v2" ? BB_API_V2 : BB_API_V1
+  const url = `${baseUrl}${endpoint}`
+
+  // Get cookies and build Cookie header manually (service workers need this)
+  const cookies = await getBlackboardCookies()
+  const cookieHeader = cookies.map(c => `${c.name}=${c.value}`).join("; ")
+
+  return fetch(url, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      Cookie: cookieHeader,
+    },
+  })
+}
+
+/**
+ * Get paginated results from Blackboard API
+ */
+async function bbGetPaginated<T>(endpoint: string, version: "v1" | "v2" = "v1"): Promise<T[]> {
+  const allResults: T[] = []
+  let currentOffset = 0
+  const limit = 100
+
+  while (true) {
+    const separator = endpoint.includes("?") ? "&" : "?"
+    const paginatedEndpoint = `${endpoint}${separator}offset=${currentOffset}&limit=${limit}`
+
+    const response = await bbFetch(paginatedEndpoint, version)
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error("AUTH_EXPIRED")
+      }
+      throw new Error(`API_ERROR_${response.status}`)
+    }
+
+    const data = await response.json()
+    const results = data.results || []
+    allResults.push(...results)
+
+    if (!data.paging?.nextPage || results.length < limit) {
+      break
+    }
+
+    currentOffset += limit
+  }
+
+  return allResults
+}
+
+/**
+ * Validate Blackboard session and get current user
+ */
+async function getBlackboardUser(): Promise<BBUser | null> {
+  try {
+    const response = await bbFetch("/users/me")
+    if (!response.ok) return null
+    return await response.json()
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Get enrolled courses from Blackboard
+ */
+async function getBlackboardCourses(userId: string): Promise<BBCourse[]> {
+  const memberships = await bbGetPaginated<{ courseId: string }>(`/users/${userId}/courses`)
+  const courses: BBCourse[] = []
+
+  for (const membership of memberships) {
+    if (!membership.courseId) continue
+
+    try {
+      const response = await bbFetch(`/courses/${membership.courseId}`)
+      if (response.ok) {
+        const course = await response.json()
+        if (course.externalAccessUrl) {
+          courses.push(course)
+        }
+      }
+    } catch (e) {
+      console.warn(`Could not fetch course ${membership.courseId}:`, e)
+    }
+  }
+
+  return courses
+}
+
+// ============================================================================
+// Blackboard Assignments (Homework)
+// ============================================================================
+
+interface BBAssignment {
+  id: string
+  contentId: string | null
+  name: string
+  courseId: string
+  courseName: string | null
+  due: string | null
+  scorePossible: number | null
+  score: number | null
+  status: string
+  submitted: boolean
+  graded: boolean
+  isPastDue: boolean
+  acceptsLate: boolean
+  gradingType: string
+}
+
+/**
+ * Get assignments for a specific course
+ * Based on Python client's get_course_assignments()
+ */
+async function getBlackboardCourseAssignments(
+  courseId: string,
+  userId: string,
+  courseName: string | null = null
+): Promise<BBAssignment[]> {
+  const assignments: BBAssignment[] = []
+
+  try {
+    // Get gradebook columns from v2 API
+    const columns = await bbGetPaginated<{
+      id: string
+      name: string
+      contentId?: string
+      grading?: { type?: string; due?: string }
+      score?: { possible?: number }
+    }>(`/courses/${courseId}/gradebook/columns`, "v2")
+
+    for (const column of columns) {
+      const columnId = column.id
+      const grading = column.grading || {}
+      const gradingType = grading.type || "Manual"
+
+      // Skip calculated columns (like Total, Weighted Total)
+      if (gradingType === "Calculated") continue
+
+      const due = grading.due || null
+      let isPastDue = false
+      if (due) {
+        try {
+          const dueDate = new Date(due)
+          isPastDue = new Date() > dueDate
+        } catch {
+          // Invalid date
+        }
+      }
+
+      // Get user's grade for this column
+      let score: number | null = null
+      let status: string = "NotSubmitted"
+      let graded = false
+      let submitted = false
+
+      try {
+        const gradeResponse = await bbFetch(
+          `/courses/${courseId}/gradebook/columns/${columnId}/users/${userId}`
+        )
+        if (gradeResponse.ok) {
+          const grade = await gradeResponse.json()
+          const gradeStatus = grade.status
+          score = grade.score ?? null
+
+          if (gradeStatus === "Graded") {
+            status = "Graded"
+            graded = true
+            submitted = true
+          } else if (gradeStatus === "NeedsGrading") {
+            status = "Submitted"
+            submitted = true
+          } else if (gradeStatus) {
+            status = gradeStatus
+            submitted = true
+          } else if (score !== null) {
+            status = "Graded"
+            graded = true
+            submitted = true
+          }
+        }
+      } catch {
+        // No grade record - not submitted
+      }
+
+      // Check if late submissions are allowed
+      let acceptsLate = true
+      const contentId = column.contentId || null
+      if (contentId) {
+        try {
+          const contentResponse = await bbFetch(
+            `/courses/${courseId}/contents/${contentId}`
+          )
+          if (contentResponse.ok) {
+            const content = await contentResponse.json()
+            const handler = content.contentHandler || {}
+            acceptsLate = !handler.isLateAttemptCreationDisallowed
+          }
+        } catch {
+          // Default to accepting late
+        }
+      }
+
+      assignments.push({
+        id: columnId,
+        contentId,
+        name: column.name || "Unknown",
+        courseId,
+        courseName,
+        due,
+        scorePossible: column.score?.possible ?? null,
+        score,
+        status,
+        submitted,
+        graded,
+        isPastDue,
+        acceptsLate,
+        gradingType,
+      })
+    }
+  } catch (e) {
+    console.warn(`Could not fetch assignments for course ${courseId}:`, e)
+  }
+
+  return assignments
+}
+
+/**
+ * Get all assignments from all courses
+ */
+async function getBlackboardAllAssignments(
+  userId: string,
+  courses: BBCourse[]
+): Promise<BBAssignment[]> {
+  const allAssignments: BBAssignment[] = []
+
+  for (const course of courses) {
+    const courseAssignments = await getBlackboardCourseAssignments(
+      course.id,
+      userId,
+      course.name
+    )
+    allAssignments.push(...courseAssignments)
+  }
+
+  return allAssignments
+}
+
+// ============================================================================
+// Blackboard Attendance
+// ============================================================================
+
+interface BBAttendanceRecord {
+  meetingId: string
+  meetingName: string | null
+  status: string
+  courseId: string
+  courseName: string | null
+}
+
+/**
+ * Get attendance records for a specific course
+ */
+async function getBlackboardCourseAttendance(
+  courseId: string,
+  userId: string,
+  courseName: string | null = null
+): Promise<BBAttendanceRecord[]> {
+  const records: BBAttendanceRecord[] = []
+
+  try {
+    // Get course meetings
+    const meetings = await bbGetPaginated<{
+      id: string
+      name?: string
+    }>(`/courses/${courseId}/meetings`)
+
+    for (const meeting of meetings) {
+      try {
+        const attendanceResponse = await bbFetch(
+          `/courses/${courseId}/meetings/${meeting.id}/users/${userId}`
+        )
+        if (attendanceResponse.ok) {
+          const attendance = await attendanceResponse.json()
+          records.push({
+            meetingId: meeting.id,
+            meetingName: meeting.name || null,
+            status: attendance.status || "unknown",
+            courseId,
+            courseName,
+          })
+        } else {
+          records.push({
+            meetingId: meeting.id,
+            meetingName: meeting.name || null,
+            status: "unknown",
+            courseId,
+            courseName,
+          })
+        }
+      } catch {
+        records.push({
+          meetingId: meeting.id,
+          meetingName: meeting.name || null,
+          status: "unknown",
+          courseId,
+          courseName,
+        })
+      }
+    }
+  } catch (e) {
+    console.warn(`Could not fetch attendance for course ${courseId}:`, e)
+  }
+
+  return records
+}
+
+/**
+ * Get all attendance from all courses
+ */
+async function getBlackboardAllAttendance(
+  userId: string,
+  courses: BBCourse[]
+): Promise<BBAttendanceRecord[]> {
+  const allAttendance: BBAttendanceRecord[] = []
+
+  for (const course of courses) {
+    const courseAttendance = await getBlackboardCourseAttendance(
+      course.id,
+      userId,
+      course.name
+    )
+    allAttendance.push(...courseAttendance)
+  }
+
+  return allAttendance
+}
+
+/**
+ * Calculate attendance percentage
+ */
+function calculateAttendancePercentage(records: BBAttendanceRecord[]): {
+  present: number
+  absent: number
+  total: number
+  percentage: number
+} {
+  const total = records.length
+  let present = 0
+  let absent = 0
+
+  for (const record of records) {
+    const status = record.status.toLowerCase()
+    if (["present", "late", "excused"].includes(status)) {
+      present++
+    } else if (status === "absent") {
+      absent++
+    }
+  }
+
+  const percentage = total > 0 ? Math.round((present / total) * 100) : 0
+
+  return { present, absent, total, percentage }
+}
+
+// ============================================================================
+// Blackboard Data Cache (Local Storage Layer)
+// ============================================================================
+
+interface BBLocalCache {
+  user: {
+    id: string
+    name: string
+    username: string
+    email?: string
+  }
+  courses: BBCourseRow[]
+  assignments: BBAssignmentRow[]
+  attendance: BBAttendanceRow[]
+  attendanceStats: BBAttendanceStats
+  savedAt: string
+}
+
+/**
+ * Get Blackboard data with multi-layer caching + Supabase comparison
+ * Flow:
+ * 1. Return local data instantly (if exists)
+ * 2. Check Supabase → if newer AND fresh, replace local
+ * 3. If no local, use Supabase
+ * 4. If all stale or missing, trigger fresh fetch
+ */
+async function getBlackboardDataWithCaching(studentId: string): Promise<{
+  data: BBLocalCache | null
+  source: "cache" | "supabase" | "none"
+  needsRefresh: boolean
+  supabaseWasNewer?: boolean
+}> {
+  // Step 1: Check chrome.storage.local
+  const localResult = await chrome.storage.local.get(["bbSession"])
+  
+  const hasLocalCache = localResult.bbSession?.user
+  const localTimestamp = localResult.bbSession?.savedAt
+  
+  if (hasLocalCache) {
+    const localIsStale = isDataStale(localTimestamp)
+    console.log(`📦 BB Local cache found. Stale: ${localIsStale}, Last synced: ${localTimestamp}`)
+    
+    // Step 2: Also check Supabase to see if it has newer data
+    console.log("☁️ Checking Supabase for newer BB data...")
+    const supabaseData = await getBlackboardDataFromSupabase(studentId)
+    
+    if (supabaseData && isNewerTimestamp(localTimestamp, supabaseData.lastSync)) {
+      const supabaseIsStale = isDataStale(supabaseData.lastSync)
+      
+      if (!supabaseIsStale) {
+        // Supabase has NEWER and FRESH data - replace local cache
+        console.log(`☁️ Supabase has newer fresh BB data (${supabaseData.lastSync}), replacing local cache`)
+        
+        const localData: BBLocalCache = {
+          user: {
+            id: supabaseData.bbUserId,
+            name: supabaseData.bbUsername,
+            username: supabaseData.bbUsername,
+          },
+          courses: supabaseData.courses,
+          assignments: supabaseData.assignments,
+          attendance: supabaseData.attendance,
+          attendanceStats: supabaseData.attendanceStats,
+          savedAt: supabaseData.lastSync,
+        }
+        
+        // Replace local cache with Supabase data
+        await chrome.storage.local.set({ bbSession: localData })
+        
+        return {
+          data: localData,
+          source: "supabase",
+          needsRefresh: false,
+          supabaseWasNewer: true,
+        }
+      } else {
+        console.log(`☁️ Supabase has newer but stale BB data, keeping local, needs refresh`)
+      }
+    } else {
+      console.log(`📦 BB Local cache is up-to-date or newer than Supabase`)
+    }
+    
+    // Return local data
+    return {
+      data: localResult.bbSession as BBLocalCache,
+      source: "cache",
+      needsRefresh: localIsStale,
+    }
+  }
+  
+  console.log("📦 No BB local cache, checking Supabase...")
+  
+  // Step 3: No local cache - check Supabase
+  const supabaseData = await getBlackboardDataFromSupabase(studentId)
+  
+  if (supabaseData) {
+    const isStale = isDataStale(supabaseData.lastSync)
+    
+    console.log(`☁️ BB Supabase data found. Stale: ${isStale}, Last sync: ${supabaseData.lastSync}`)
+    
+    // Convert to local format and cache locally
+    const localData: BBLocalCache = {
+      user: {
+        id: supabaseData.bbUserId,
+        name: supabaseData.bbUsername,
+        username: supabaseData.bbUsername,
+      },
+      courses: supabaseData.courses,
+      assignments: supabaseData.assignments,
+      attendance: supabaseData.attendance,
+      attendanceStats: supabaseData.attendanceStats,
+      savedAt: supabaseData.lastSync,
+    }
+    
+    // Save to local cache
+    await chrome.storage.local.set({ bbSession: localData })
+    
+    return {
+      data: localData,
+      source: "supabase",
+      needsRefresh: isStale,
+    }
+  }
+  
+  console.log("📦 No BB data in Supabase, needs fresh fetch")
+  
+  return {
+    data: null,
+    source: "none",
+    needsRefresh: true,
+  }
+}
+
+/**
+ * Save Blackboard data to local cache
+ */
+async function saveBBToLocalCache(data: BBLocalCache): Promise<void> {
+  await chrome.storage.local.set({ bbSession: data })
+  console.log("💾 BB data saved to local cache")
+}
+
+/**
+ * Sync pending Blackboard data to Supabase
+ * Called after Esprit Portal login to sync any BB data that was captured before login
+ */
+async function syncPendingBlackboardData(studentId: string): Promise<void> {
+  try {
+    const stored = await chrome.storage.local.get(["bbSession"])
+    
+    if (!stored.bbSession || !stored.bbSession.user) {
+      console.log("📦 No pending Blackboard data to sync")
+      return
+    }
+    
+    const bbSession = stored.bbSession as BBLocalCache
+    
+    console.log("🔄 Syncing pending Blackboard data to Supabase...")
+    
+    const success = await upsertBlackboardData(
+      studentId,
+      bbSession.user.id,
+      bbSession.user.username,
+      bbSession.courses,
+      bbSession.assignments,
+      bbSession.attendance,
+      bbSession.attendanceStats
+    )
+    
+    if (success) {
+      console.log("✅ Pending Blackboard data synced to Supabase")
+    } else {
+      console.warn("⚠️ Failed to sync pending Blackboard data")
+    }
+  } catch (error) {
+    console.warn("❌ Error syncing pending Blackboard data:", error)
+  }
+}
+
+// ============================================================================
+// Blackboard Sync State - Prevent spam
+// ============================================================================
+let lastBBSyncTime = 0
+let bbSyncInProgress = false
+const BB_SYNC_COOLDOWN_MS = 30000 // 30 seconds between syncs
+
+/**
+ * Sync Blackboard session to web app
+ */
+async function syncBlackboardToWebApp(
+  user: BBUser,
+  courses: BBCourse[],
+  cookies: BBCookie[]
+): Promise<void> {
+  // Get stored Esprit student ID to link accounts
+  const stored = await chrome.storage.local.get(["cachedCredentials"])
+  const studentId = stored.cachedCredentials?.id
+
+  console.log("📊 Fetching assignments and attendance...")
+  
+  // Fetch assignments (homework) for all courses
+  const assignments = await getBlackboardAllAssignments(user.id, courses)
+  console.log(`📝 Found ${assignments.length} assignments`)
+  
+  // Fetch attendance for all courses
+  const attendance = await getBlackboardAllAttendance(user.id, courses)
+  const attendanceStats = calculateAttendancePercentage(attendance)
+  console.log(`📅 Found ${attendance.length} attendance records (${attendanceStats.percentage}% present)`)
+
+  const coursesData: BBCourseRow[] = courses.map((c) => ({
+    id: c.id,
+    courseId: c.courseId,
+    name: c.name,
+    url: c.externalAccessUrl || null,
+  }))
+
+  // Convert assignments to proper type
+  const assignmentsData: BBAssignmentRow[] = assignments
+
+  // Convert attendance to proper type
+  const attendanceData: BBAttendanceRow[] = attendance
+
+  const payload = {
+    user: {
+      id: user.id,
+      name: `${user.name?.given || ""} ${user.name?.family || ""}`.trim(),
+      username: user.userName,
+      email: user.contact?.email,
+    },
+    courses: coursesData,
+    assignments: assignmentsData,
+    attendance: attendanceData,
+    attendanceStats: attendanceStats,
+    bbCookies: cookies,
+    studentId: studentId,
+  }
+
+  // Sync to Supabase (all data: courses, assignments, attendance)
+  if (studentId) {
+    try {
+      const success = await upsertBlackboardData(
+        studentId,
+        user.id,
+        user.userName,
+        coursesData,
+        assignmentsData,
+        attendanceData,
+        attendanceStats as BBAttendanceStats
+      )
+      if (success) {
+        console.log("✅ Blackboard data synced to Supabase")
+      } else {
+        console.warn("⚠️ Supabase sync returned false - check RPC function")
+      }
+    } catch (error) {
+      console.warn("❌ Could not sync to Supabase:", error)
+    }
+  } else {
+    console.warn("⚠️ No Esprit studentId cached - Blackboard data saved locally only. Login to Esprit Portal to sync to Supabase.")
+  }
+
+  // Sync to web app (for current session) - only send summary, not full data
+  // Full data is in Supabase, cookie just tracks connection status
+  try {
+    const response = await fetch(`${WEB_APP_URL}/api/blackboard/sync`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      credentials: "include",
+    })
+
+    if (response.ok) {
+      console.log("✅ Blackboard session synced to web app")
+      
+      const savedAt = new Date().toISOString()
+      
+      // Store in local cache for multi-layer caching system
+      await saveBBToLocalCache({
+        user: payload.user,
+        courses: payload.courses,
+        assignments: payload.assignments,
+        attendance: payload.attendance,
+        attendanceStats: payload.attendanceStats as BBAttendanceStats,
+        savedAt,
+      })
+      
+      // Also store in bbSession for quick access
+      await chrome.storage.local.set({
+        bbSession: {
+          user: payload.user,
+          courses: payload.courses,
+          assignments: payload.assignments,
+          attendance: payload.attendance,
+          attendanceStats: payload.attendanceStats,
+          savedAt,
+        },
+      })
+    } else {
+      console.warn("Failed to sync Blackboard session:", await response.text())
+    }
+  } catch (error) {
+    console.warn("Could not sync Blackboard session:", error)
+  }
+}
+
+/**
+ * Handle Blackboard login detection
+ * Called when user navigates to Blackboard (not on login page)
+ * Implements multi-layer caching: localStorage → Supabase → Fresh fetch
+ */
+async function handleBlackboardLogin(): Promise<void> {
+  // Check cooldown - don't sync more than once every 30 seconds
+  const now = Date.now()
+  if (now - lastBBSyncTime < BB_SYNC_COOLDOWN_MS) {
+    console.log("⏳ Blackboard sync on cooldown, skipping...")
+    return
+  }
+  
+  // Prevent concurrent syncs
+  if (bbSyncInProgress) {
+    console.log("⏳ Blackboard sync already in progress, skipping...")
+    return
+  }
+  
+  bbSyncInProgress = true
+  console.log("🔍 Checking Blackboard authentication...")
+
+  try {
+    const isAuth = await isBlackboardAuthenticated()
+    if (!isAuth) {
+      console.log("❌ Not authenticated with Blackboard")
+      return
+    }
+
+    console.log("✅ Blackboard cookies found, validating session...")
+
+    const user = await getBlackboardUser()
+    if (!user) {
+      console.log("❌ Could not validate Blackboard user")
+      return
+    }
+
+    console.log(`👤 Blackboard user: ${user.name?.given} ${user.name?.family}`)
+
+    // Get stored Esprit student ID
+    const stored = await chrome.storage.local.get(["cachedCredentials"])
+    const studentId = stored.cachedCredentials?.id
+    
+    // Check cache first
+    if (studentId) {
+      const cached = await getBlackboardDataWithCaching(studentId)
+      
+      if (cached.data && !cached.needsRefresh) {
+        console.log(`📦 Using cached BB data from ${cached.source}, no refresh needed`)
+        // Update last sync time to prevent unnecessary calls
+        lastBBSyncTime = Date.now()
+        return
+      }
+      
+      if (cached.data && cached.needsRefresh) {
+        console.log(`📦 Cache found from ${cached.source} but stale, will refresh...`)
+      }
+    }
+
+    // Fetch fresh data from Blackboard API
+    console.log("🔄 Fetching fresh Blackboard data...")
+    
+    const cookies = await getBlackboardCookies()
+    const courses = await getBlackboardCourses(user.id)
+
+    console.log(`📚 Found ${courses.length} courses`)
+
+    // Sync to web app and Supabase
+    await syncBlackboardToWebApp(user, courses, cookies)
+    
+    // Update last sync time on success
+    lastBBSyncTime = Date.now()
+    console.log("✅ Blackboard sync complete, next allowed in 30 seconds")
+  } finally {
+    bbSyncInProgress = false
+  }
+}
+
+// Debounce timer for Blackboard login detection
+let bbLoginDebounceTimer: ReturnType<typeof setTimeout> | null = null
+
+function debouncedHandleBlackboardLogin(): void {
+  // Clear any pending timer
+  if (bbLoginDebounceTimer) {
+    clearTimeout(bbLoginDebounceTimer)
+  }
+  // Set new timer - only fire after 2 seconds of no new triggers
+  bbLoginDebounceTimer = setTimeout(() => {
+    bbLoginDebounceTimer = null
+    handleBlackboardLogin()
+  }, 2000)
+}
+
+// Listen for navigation to Blackboard
+chrome.webNavigation.onCompleted.addListener(
+  async (details) => {
+    const url = new URL(details.url)
+
+    // Check if user navigated to Blackboard (not login page)
+    if (
+      url.hostname === BB_DOMAIN &&
+      !url.pathname.includes("/webapps/login/")
+    ) {
+      // Debounced call to prevent spam
+      debouncedHandleBlackboardLogin()
+    }
+  },
+  { url: [{ hostContains: BB_DOMAIN }] }
+)
+
+// Also check on cookie changes for Blackboard
+chrome.cookies.onChanged.addListener((changeInfo) => {
+  if (
+    changeInfo.cookie.domain.includes(BB_DOMAIN) &&
+    changeInfo.cookie.name === "BbRouter" &&
+    !changeInfo.removed
+  ) {
+    console.log("🍪 Blackboard session cookie detected")
+    // Debounced call to prevent spam
+    debouncedHandleBlackboardLogin()
+  }
+})
+
+// Message handler for Blackboard actions
+chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
+  if (request.action === "GET_BB_STATUS") {
+    (async () => {
+      // First check if we have cached data - return that even if BB session expired
+      const stored = await chrome.storage.local.get(["bbSession"])
+      
+      if (stored.bbSession?.user) {
+        // We have cached data, return it
+        sendResponse({
+          connected: true,
+          user: stored.bbSession.user,
+          courseCount: stored.bbSession.courses?.length || 0,
+          assignmentCount: stored.bbSession.assignments?.length || 0,
+          attendanceStats: stored.bbSession.attendanceStats || null,
+          lastSync: stored.bbSession.savedAt,
+        })
+        return
+      }
+      
+      // No cached data, check live Blackboard session
+      const isAuth = await isBlackboardAuthenticated()
+      if (!isAuth) {
+        sendResponse({ connected: false })
+        return
+      }
+
+      const user = await getBlackboardUser()
+      if (!user) {
+        sendResponse({ connected: false })
+        return
+      }
+
+      sendResponse({
+        connected: true,
+        user: {
+          id: user.id,
+          name: `${user.name?.given || ""} ${user.name?.family || ""}`.trim(),
+          username: user.userName,
+          email: user.contact?.email,
+        },
+        courseCount: 0,
+        assignmentCount: 0,
+        attendanceStats: null,
+        lastSync: null,
+      })
+    })()
+    return true
+  }
+
+  if (request.action === "SYNC_BB_NOW") {
+    handleBlackboardLogin()
+      .then(() => sendResponse({ success: true }))
+      .catch((error) => sendResponse({ success: false, error: error.message }))
+    return true
+  }
+
+  if (request.action === "GET_BB_COURSES") {
+    (async () => {
+      const stored = await chrome.storage.local.get(["bbSession"])
+      sendResponse({
+        success: true,
+        courses: stored.bbSession?.courses || [],
+        lastSync: stored.bbSession?.savedAt,
+      })
+    })()
+    return true
+  }
+
+  if (request.action === "GET_BB_ASSIGNMENTS") {
+    (async () => {
+      const stored = await chrome.storage.local.get(["bbSession"])
+      const assignments = stored.bbSession?.assignments || []
+      
+      // Calculate nearest deadline
+      const now = new Date()
+      const pendingWithDue = assignments.filter(
+        (a: BBAssignmentRow) => a.status !== "Graded" && a.due && new Date(a.due) > now
+      )
+      pendingWithDue.sort((a: BBAssignmentRow, b: BBAssignmentRow) => 
+        new Date(a.due!).getTime() - new Date(b.due!).getTime()
+      )
+      
+      const nearestDeadline = pendingWithDue[0] || null
+      let deadlineAlert = null
+
+      if (nearestDeadline?.due) {
+        const dueDate = new Date(nearestDeadline.due)
+        const diffMs = dueDate.getTime() - now.getTime()
+        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+        const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60))
+        
+        let timeLeft = ""
+        if (diffDays > 0) {
+          timeLeft = `${diffDays} day${diffDays > 1 ? "s" : ""} ${diffHours}h`
+        } else if (diffHours > 0) {
+          timeLeft = `${diffHours} hour${diffHours > 1 ? "s" : ""}`
+        } else {
+          timeLeft = "Less than 1 hour"
+        }
+
+        deadlineAlert = {
+          assignment: nearestDeadline.name,
+          course: nearestDeadline.courseName,
+          timeLeft,
+          dueDate: nearestDeadline.due,
+        }
+      }
+
+      sendResponse({
+        success: true,
+        assignments,
+        deadlineAlert,
+        total: assignments.length,
+        pending: assignments.filter((a: BBAssignmentRow) => a.status !== "Graded").length,
+      })
+    })()
+    return true
+  }
+
+  if (request.action === "GET_BB_FULL_DATA") {
+    (async () => {
+      const stored = await chrome.storage.local.get(["bbSession"])
+      if (!stored.bbSession) {
+        sendResponse({ success: false, error: "No Blackboard data cached" })
+        return
+      }
+      sendResponse({
+        success: true,
+        data: stored.bbSession,
+      })
+    })()
+    return true
+  }
+
+  return false
+})

@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   BookOpen,
   User,
@@ -11,8 +12,12 @@ import {
   AlertCircle,
   Clock,
   GraduationCap,
+  Link2,
+  ExternalLink,
+  RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import Link from "next/link";
 
 interface TimeSlot {
   time: string;
@@ -39,6 +44,19 @@ interface CourseInfo {
   rooms: string[];
   days: string[];
   times: string[];
+}
+
+interface BBCourse {
+  id: string;
+  courseId: string;
+  name: string;
+  url?: string;
+}
+
+interface BBCoursesResponse {
+  success: boolean;
+  courses: BBCourse[];
+  lastSync?: string;
 }
 
 // French day names
@@ -98,6 +116,45 @@ export default function CoursesPage() {
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"schedule" | "blackboard">(
+    "schedule",
+  );
+  const [bbCourses, setBbCourses] = useState<BBCourse[]>([]);
+  const [bbLoading, setBbLoading] = useState(false);
+  const [bbConnected, setBbConnected] = useState(false);
+
+  const fetchBlackboardCourses = useCallback(async () => {
+    setBbLoading(true);
+    try {
+      // Get extension ID from localStorage
+      const extensionId = localStorage.getItem("extensionId");
+
+      if (!extensionId || typeof chrome === "undefined" || !chrome.runtime) {
+        setBbLoading(false);
+        return;
+      }
+
+      // Ask extension for courses from local storage
+      chrome.runtime.sendMessage(
+        extensionId,
+        { action: "GET_BB_COURSES" },
+        (response) => {
+          if (chrome.runtime.lastError || !response?.success) {
+            console.log("Blackboard not connected");
+            setBbLoading(false);
+            return;
+          }
+
+          setBbCourses(response.courses || []);
+          setBbConnected(response.courses?.length > 0);
+          setBbLoading(false);
+        },
+      );
+    } catch (err) {
+      console.log("Blackboard not connected:", err);
+      setBbLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     const fetchTimetable = async () => {
@@ -139,7 +196,8 @@ export default function CoursesPage() {
     };
 
     fetchTimetable();
-  }, []);
+    fetchBlackboardCourses();
+  }, [fetchBlackboardCourses]);
 
   // Extract unique courses from the schedule
   const getCourses = (): CourseInfo[] => {
@@ -235,15 +293,44 @@ export default function CoursesPage() {
               My Courses
             </h1>
             <p className="text-muted-foreground mt-1">
-              All courses for {timetableData?.classCode || "your class"}
+              {viewMode === "schedule"
+                ? `All courses for ${timetableData?.classCode || "your class"}`
+                : "Courses from Blackboard"}
             </p>
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
+            {/* View Mode Toggle */}
+            <div className="flex gap-1 bg-muted rounded-lg p-1">
+              <Button
+                size="sm"
+                variant={viewMode === "schedule" ? "default" : "ghost"}
+                onClick={() => setViewMode("schedule")}
+              >
+                Schedule
+              </Button>
+              <Button
+                size="sm"
+                variant={viewMode === "blackboard" ? "default" : "ghost"}
+                onClick={() => setViewMode("blackboard")}
+                disabled={!bbConnected}
+                className="gap-1"
+              >
+                <Link2 className="h-3.5 w-3.5" />
+                Blackboard
+                {!bbConnected && (
+                  <Badge variant="secondary" className="ml-1 text-xs">
+                    Not connected
+                  </Badge>
+                )}
+              </Button>
+            </div>
+
             <Badge variant="secondary" className="w-fit">
-              {courses.length} courses
+              {viewMode === "schedule" ? courses.length : bbCourses.length}{" "}
+              courses
             </Badge>
-            {timetableData?.metadata?.period && (
+            {viewMode === "schedule" && timetableData?.metadata?.period && (
               <Badge variant="outline" className="w-fit">
                 {timetableData.metadata.period.split(" - ")[0]}
               </Badge>
@@ -251,21 +338,77 @@ export default function CoursesPage() {
           </div>
         </div>
 
-        {/* Courses Grid */}
-        {courses.length === 0 ? (
-          <Card>
-            <CardContent className="p-12 text-center text-muted-foreground">
-              <BookOpen className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p className="font-medium">No courses found</p>
-              <p className="text-sm mt-1">Your schedule appears to be empty</p>
+        {/* Blackboard Connection Prompt */}
+        {viewMode === "blackboard" && !bbConnected && (
+          <Card className="border-dashed">
+            <CardContent className="p-8 text-center">
+              <Link2 className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
+              <h3 className="font-semibold mb-2">Connect Blackboard</h3>
+              <p className="text-muted-foreground text-sm mb-4">
+                Connect your Blackboard account to see your courses here
+              </p>
+              <Button asChild>
+                <Link href="/dashboard/integration">Go to Integrations</Link>
+              </Button>
             </CardContent>
           </Card>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {courses.map((course, index) => (
-              <CourseCard key={index} course={course} />
-            ))}
-          </div>
+        )}
+
+        {/* Blackboard Courses View */}
+        {viewMode === "blackboard" && bbConnected && (
+          <>
+            <div className="flex justify-end">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={fetchBlackboardCourses}
+                disabled={bbLoading}
+              >
+                {bbLoading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
+            {bbCourses.length === 0 ? (
+              <Card>
+                <CardContent className="p-12 text-center text-muted-foreground">
+                  <BookOpen className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p className="font-medium">No Blackboard courses found</p>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {bbCourses.map((course) => (
+                  <BlackboardCourseCard key={course.id} course={course} />
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Schedule-based Courses Grid */}
+        {viewMode === "schedule" && (
+          <>
+            {courses.length === 0 ? (
+              <Card>
+                <CardContent className="p-12 text-center text-muted-foreground">
+                  <BookOpen className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p className="font-medium">No courses found</p>
+                  <p className="text-sm mt-1">
+                    Your schedule appears to be empty
+                  </p>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {courses.map((course, index) => (
+                  <CourseCard key={index} course={course} />
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -346,6 +489,58 @@ function CourseCard({ course }: { course: CourseInfo }) {
                 ))}
               </div>
             </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function BlackboardCourseCard({ course }: { course: BBCourse }) {
+  const colorClass = getCourseColor(course.name);
+
+  return (
+    <Card
+      className={cn(
+        "group hover:shadow-lg transition-all duration-300 overflow-hidden border-l-4",
+        colorClass,
+      )}
+    >
+      <CardContent className="p-5">
+        <div className="space-y-4">
+          {/* Course Name */}
+          <div className="flex items-start justify-between gap-2">
+            <h3 className="font-bold text-foreground group-hover:text-primary transition-colors line-clamp-2 flex-1">
+              {course.name}
+            </h3>
+            {course.url && (
+              <a
+                href={course.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="shrink-0 p-1.5 rounded-lg hover:bg-muted transition-colors"
+              >
+                <ExternalLink className="h-4 w-4 text-muted-foreground" />
+              </a>
+            )}
+          </div>
+
+          {/* Course ID */}
+          <div className="flex items-center gap-2 text-sm">
+            <div className="p-1.5 rounded-full bg-primary/10">
+              <BookOpen className="h-4 w-4 text-primary" />
+            </div>
+            <span className="text-muted-foreground font-mono text-xs">
+              {course.courseId}
+            </span>
+          </div>
+
+          {/* Blackboard Badge */}
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="text-xs gap-1">
+              <Link2 className="h-3 w-3" />
+              Blackboard
+            </Badge>
           </div>
         </div>
       </CardContent>

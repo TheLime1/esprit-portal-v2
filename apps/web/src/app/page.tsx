@@ -1,11 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { LogIn, Eye } from "lucide-react";
+import { LogIn, Eye, Loader2 } from "lucide-react";
 
 declare global {
   interface Window {
@@ -13,13 +19,106 @@ declare global {
   }
 }
 
+// Check if cached data is stale (older than 4 hours)
+function isDataStale(timestamp: string | undefined): boolean {
+  if (!timestamp) return true;
+  const fetchedTime = new Date(timestamp).getTime();
+  const now = Date.now();
+  const hoursDiff = (now - fetchedTime) / (1000 * 60 * 60);
+  return hoursDiff >= 4;
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
+  const [checkingAuth, setCheckingAuth] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [studentId, setStudentId] = useState("");
   const [password, setPassword] = useState("");
   const [showCredentials, setShowCredentials] = useState(false);
+
+  // Check for existing login on mount - instant redirect if data exists
+  useEffect(() => {
+    const existingUser = localStorage.getItem("esprit_user");
+    const existingData = localStorage.getItem("esprit_student_data");
+
+    if (existingUser && existingData) {
+      try {
+        const userData = JSON.parse(existingUser);
+
+        // User is logged in - redirect immediately to dashboard
+        if (userData.name) {
+          console.log("✅ User already logged in, redirecting to dashboard...");
+
+          // Trigger background refresh if data is stale
+          try {
+            const studentData = JSON.parse(existingData);
+            const lastFetched =
+              studentData.lastFetched || studentData.cacheTimestamp;
+            if (isDataStale(lastFetched)) {
+              console.log("📊 Data is stale, will refresh in background...");
+              triggerBackgroundRefresh();
+            }
+          } catch {
+            // Ignore parse errors for stale check
+          }
+
+          router.replace("/dashboard");
+          return;
+        }
+      } catch {
+        console.log("Invalid stored data, clearing...");
+        localStorage.removeItem("esprit_user");
+        localStorage.removeItem("esprit_student_data");
+      }
+    }
+    setCheckingAuth(false);
+  }, [router]);
+
+  // Trigger background refresh via extension
+  const triggerBackgroundRefresh = () => {
+    const extensionId = localStorage.getItem("extensionId");
+    if (extensionId && typeof chrome !== "undefined" && chrome.runtime) {
+      chrome.runtime.sendMessage(
+        extensionId,
+        { action: "BACKGROUND_REFRESH" },
+        (response: any) => {
+          if (chrome.runtime.lastError) {
+            console.log("Background refresh failed:", chrome.runtime.lastError);
+            return;
+          }
+          if (response?.success && response.data) {
+            // Update localStorage with fresh data
+            localStorage.setItem(
+              "esprit_user",
+              JSON.stringify({
+                id: response.data.id,
+                name: response.data.name,
+                className: response.data.className,
+              }),
+            );
+            localStorage.setItem(
+              "esprit_student_data",
+              JSON.stringify(response.data),
+            );
+            console.log("✅ Background refresh completed");
+          }
+        },
+      );
+    }
+  };
+
+  // Show loading while checking if user is already logged in
+  if (checkingAuth) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <div className="text-center">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-primary" />
+          <p className="text-muted-foreground">Checking login status...</p>
+        </div>
+      </div>
+    );
+  }
 
   const handleExtensionLogin = async () => {
     if (!showCredentials) {
@@ -40,18 +139,19 @@ export default function LoginPage() {
       let extensionId = process.env.NEXT_PUBLIC_EXTENSION_ID;
 
       if (typeof window !== "undefined") {
-        extensionId = extensionId || localStorage.getItem("extensionId") || undefined;
+        extensionId =
+          extensionId || localStorage.getItem("extensionId") || undefined;
       }
 
       // If no extension ID is set, prompt the user
       if (!extensionId || extensionId === "YOUR_EXTENSION_ID") {
         const userInput = prompt(
           "Please enter your Extension ID:\n\n" +
-          "1. Go to chrome://extensions\n" +
-          "2. Enable Developer Mode\n" +
-          "3. Find 'Esprit Extension'\n" +
-          "4. Copy the ID (under the extension name)\n\n" +
-          "Extension ID:"
+            "1. Go to chrome://extensions\n" +
+            "2. Enable Developer Mode\n" +
+            "3. Find 'Esprit Extension'\n" +
+            "4. Copy the ID (under the extension name)\n\n" +
+            "Extension ID:",
         );
 
         if (!userInput) {
@@ -79,7 +179,8 @@ export default function LoginPage() {
             if (chrome.runtime.lastError) {
               setError(
                 "Extension not found. Please install the Esprit Portal extension.\n" +
-                "Error: " + chrome.runtime.lastError.message
+                  "Error: " +
+                  chrome.runtime.lastError.message,
               );
               // Clear invalid extension ID
               localStorage.removeItem("extensionId");
@@ -88,24 +189,44 @@ export default function LoginPage() {
             }
 
             if (response?.success && response.data) {
-              console.log("Login response data:", response.data);
+              console.log("✅ Login response data:", response.data);
 
               // Store user data in localStorage for the dashboard
-              localStorage.setItem(
-                "esprit_user",
-                JSON.stringify({
-                  name: response.data.name || "Unknown",
-                  className: response.data.className || "N/A",
-                })
-              );
+              const userData = {
+                id: response.data.id || studentId,
+                name: response.data.name || "Unknown",
+                className: response.data.className || "N/A",
+              };
+              localStorage.setItem("esprit_user", JSON.stringify(userData));
+              console.log("✅ esprit_user saved:", userData);
 
               // Store the full student data (includes grades)
-              localStorage.setItem("esprit_student_data", JSON.stringify(response.data));
+              localStorage.setItem(
+                "esprit_student_data",
+                JSON.stringify(response.data),
+              );
+              console.log("✅ esprit_student_data saved");
 
               // Store allGrades directly from response (returned by login)
               if (response.data.allGrades) {
-                localStorage.setItem("esprit_grades", JSON.stringify(response.data.allGrades));
-                console.log("Grades stored in localStorage:", response.data.allGrades);
+                localStorage.setItem(
+                  "esprit_grades",
+                  JSON.stringify(response.data.allGrades),
+                );
+                console.log("✅ esprit_grades saved");
+              }
+
+              // Store credits if available
+              if (response.data.credits) {
+                localStorage.setItem(
+                  "esprit_credits",
+                  JSON.stringify(response.data.credits),
+                );
+                console.log(
+                  "✅ esprit_credits saved:",
+                  response.data.credits.length,
+                  "credits",
+                );
               }
 
               // Navigate to dashboard
@@ -115,16 +236,18 @@ export default function LoginPage() {
               setError(response?.error || "Login failed");
               setIsLoading(false);
             }
-          }
+          },
         );
       } else {
         setError(
-          "Chrome extension API not available. Please use Chrome or Edge browser."
+          "Chrome extension API not available. Please use Chrome or Edge browser.",
         );
         setIsLoading(false);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to connect to extension");
+      setError(
+        err instanceof Error ? err.message : "Failed to connect to extension",
+      );
       setIsLoading(false);
     }
   };
@@ -136,7 +259,7 @@ export default function LoginPage() {
       JSON.stringify({
         name: "Alex Morgan",
         className: "Computer Science - 3A",
-      })
+      }),
     );
     router.push("/dashboard");
   };
@@ -155,7 +278,9 @@ export default function LoginPage() {
             />
           </div>
           <div>
-            <CardTitle className="text-2xl font-bold">Esprit Portal v2</CardTitle>
+            <CardTitle className="text-2xl font-bold">
+              Esprit Portal v2
+            </CardTitle>
             <CardDescription className="text-base mt-1">
               by ESPRIT@ds
             </CardDescription>
@@ -239,7 +364,8 @@ export default function LoginPage() {
           </Button>
 
           <p className="text-xs text-center text-muted-foreground mt-4">
-            Make sure the ESPRIT@ds browser extension is installed and enabled to use the login feature.
+            Make sure the ESPRIT@ds browser extension is installed and enabled
+            to use the login feature.
           </p>
         </CardContent>
       </Card>

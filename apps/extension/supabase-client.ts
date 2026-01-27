@@ -67,6 +67,16 @@ let supabaseClient: SupabaseClient | null = null
 
 export function getSupabaseClient(): SupabaseClient {
   if (!supabaseClient) {
+    // Validate environment variables
+    if (!SUPABASE_URL || SUPABASE_URL === "your_supabase_url_here") {
+      console.error("❌ PLASMO_PUBLIC_SUPABASE_URL is not configured!")
+    }
+    if (!SUPABASE_ANON_KEY || SUPABASE_ANON_KEY === "your_supabase_anon_key_here") {
+      console.error("❌ PLASMO_PUBLIC_SUPABASE_ANON_KEY is not configured!")
+    }
+    
+    console.log("🔌 Initializing Supabase client with URL:", SUPABASE_URL?.substring(0, 30) + "...")
+    
     supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       auth: {
         persistSession: false,  // No session persistence in extension
@@ -99,7 +109,7 @@ export async function getStudentDataFromSupabase(
       })
     
     if (error) {
-      console.error("Supabase RPC error:", error)
+      console.error("Supabase RPC error:", error.message, error.code, error.details)
       return null
     }
     
@@ -141,7 +151,7 @@ export async function upsertStudentDataToSupabase(
       })
     
     if (error) {
-      console.error("Supabase upsert error:", error)
+      console.error("Supabase upsert error:", error.message, error.code, error.details)
       return false
     }
     
@@ -171,7 +181,7 @@ export async function checkDataFreshness(
       })
     
     if (error) {
-      console.error("Supabase freshness check error:", error)
+      console.error("Supabase freshness check error:", error.message, error.code, error.details)
       return null
     }
     
@@ -200,4 +210,180 @@ export function isDataStale(lastFetched: string | undefined): boolean {
   const hoursDiff = (now - fetchedTime) / (1000 * 60 * 60)
   
   return hoursDiff >= CACHE_DURATION_HOURS
+}
+
+/**
+ * Compare two timestamps and return true if the second one is newer
+ * @param localTimestamp ISO timestamp from local cache
+ * @param supabaseTimestamp ISO timestamp from Supabase
+ * @returns true if supabaseTimestamp is newer than localTimestamp
+ */
+export function isNewerTimestamp(localTimestamp: string | undefined, supabaseTimestamp: string | undefined): boolean {
+  if (!supabaseTimestamp) return false
+  if (!localTimestamp) return true
+  
+  const localTime = new Date(localTimestamp).getTime()
+  const supabaseTime = new Date(supabaseTimestamp).getTime()
+  
+  return supabaseTime > localTime
+}
+
+// ============================================================================
+// Blackboard Courses Storage
+// ============================================================================
+
+export interface BBCourseRow {
+  id: string
+  courseId: string
+  name: string
+  url: string | null
+}
+
+export interface BBAssignmentRow {
+  id: string
+  contentId: string | null
+  name: string
+  courseId: string
+  courseName: string | null
+  due: string | null
+  scorePossible: number | null
+  score: number | null
+  status: string
+  submitted: boolean
+  graded: boolean
+  isPastDue: boolean
+  acceptsLate: boolean
+  gradingType: string
+}
+
+export interface BBAttendanceRow {
+  meetingId: string
+  meetingName: string | null
+  status: string
+  courseId: string
+  courseName: string | null
+}
+
+export interface BBAttendanceStats {
+  present: number
+  absent: number
+  total: number
+  percentage: number
+}
+
+/**
+ * Upsert full Blackboard data to Supabase
+ * Includes courses, assignments, and attendance
+ */
+export async function upsertBlackboardData(
+  studentId: string,
+  bbUserId: string,
+  bbUsername: string,
+  courses: BBCourseRow[],
+  assignments: BBAssignmentRow[] = [],
+  attendance: BBAttendanceRow[] = [],
+  attendanceStats: BBAttendanceStats = { present: 0, absent: 0, total: 0, percentage: 0 }
+): Promise<boolean> {
+  const supabase = getSupabaseClient()
+  
+  try {
+    // Use RPC function to bypass RLS while still validating student exists
+    const { data, error } = await supabase
+      .rpc("upsert_blackboard_session", {
+        p_student_id: studentId,
+        p_bb_user_id: bbUserId,
+        p_bb_username: bbUsername,
+        p_courses: courses,
+        p_assignments: assignments,
+        p_attendance: attendance,
+        p_attendance_stats: attendanceStats,
+      })
+    
+    if (error) {
+      console.error("Supabase BB session upsert error:", error.message, error.code, error.details)
+      return false
+    }
+    
+    console.log(`Synced to Supabase: ${courses.length} courses, ${assignments.length} assignments, ${attendance.length} attendance records`)
+    return true
+  } catch (e) {
+    console.error("Failed to upsert BB data to Supabase:", e)
+    return false
+  }
+}
+
+/**
+ * @deprecated Use upsertBlackboardData instead
+ * Upsert Blackboard courses to Supabase (legacy, courses only)
+ */
+export async function upsertBlackboardCourses(
+  studentId: string,
+  bbUserId: string,
+  bbUsername: string,
+  courses: BBCourseRow[]
+): Promise<boolean> {
+  return upsertBlackboardData(studentId, bbUserId, bbUsername, courses)
+}
+
+/**
+ * Full Blackboard session data from Supabase
+ */
+export interface BBSessionData {
+  bbUserId: string
+  bbUsername: string
+  courses: BBCourseRow[]
+  assignments: BBAssignmentRow[]
+  attendance: BBAttendanceRow[]
+  attendanceStats: BBAttendanceStats
+  lastSync: string
+}
+
+/**
+ * Get full Blackboard data from Supabase
+ */
+export async function getBlackboardDataFromSupabase(
+  studentId: string
+): Promise<BBSessionData | null> {
+  const supabase = getSupabaseClient()
+  
+  try {
+    const { data, error } = await supabase
+      .rpc("get_blackboard_session", {
+        p_student_id: studentId,
+      })
+    
+    if (error) {
+      console.error("Supabase BB data fetch error:", error.message, error.code, error.details)
+      return null
+    }
+    
+    if (data && data.length > 0) {
+      const row = data[0]
+      return {
+        bbUserId: row.bb_user_id,
+        bbUsername: row.bb_username,
+        courses: row.courses as BBCourseRow[] || [],
+        assignments: row.assignments as BBAssignmentRow[] || [],
+        attendance: row.attendance as BBAttendanceRow[] || [],
+        attendanceStats: row.attendance_stats as BBAttendanceStats || { present: 0, absent: 0, total: 0, percentage: 0 },
+        lastSync: row.last_full_sync || row.last_courses_sync,
+      }
+    }
+    
+    return null
+  } catch (e) {
+    console.error("Failed to get BB data from Supabase:", e)
+    return null
+  }
+}
+
+/**
+ * @deprecated Use getBlackboardDataFromSupabase instead
+ * Get Blackboard courses from Supabase
+ */
+export async function getBlackboardCoursesFromSupabase(
+  studentId: string
+): Promise<BBCourseRow[] | null> {
+  const data = await getBlackboardDataFromSupabase(studentId)
+  return data?.courses || null
 }

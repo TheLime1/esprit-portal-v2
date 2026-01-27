@@ -33,12 +33,15 @@
       "https://*/*"
     ],
     "permissions": [
-      "storage"
+      "storage",
+      "cookies",
+      "webNavigation"
     ],
     "externally_connectable": {
       "matches": [
         "http://localhost:3000/*",
-        "https://localhost:3000/*"
+        "https://localhost:3000/*",
+        "https://esprit-portal-v2.vercel.app/*"
       ]
     },
     "commands": {
