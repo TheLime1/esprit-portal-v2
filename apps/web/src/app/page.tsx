@@ -11,7 +11,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { LogIn, Loader2 } from "lucide-react";
+import { LogIn, Loader2, AlertTriangle } from "lucide-react";
 
 // Check if cached data is stale (older than 4 hours)
 function isDataStale(timestamp: string | undefined): boolean {
@@ -22,6 +22,35 @@ function isDataStale(timestamp: string | undefined): boolean {
   return hoursDiff >= 4;
 }
 
+// Check if extension is installed
+async function checkExtensionInstalled(): Promise<boolean> {
+  const extensionId = "ecoohmcojdcogincjmomppjjhddlfcjj";
+
+  if (typeof chrome === "undefined" || !chrome.runtime) {
+    return false;
+  }
+
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage(
+        extensionId,
+        { action: "PING" },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            resolve(false);
+          } else {
+            resolve(true);
+          }
+        },
+      );
+      // Timeout after 2 seconds
+      setTimeout(() => resolve(false), 2000);
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
@@ -29,6 +58,9 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [studentId, setStudentId] = useState("");
   const [password, setPassword] = useState("");
+  const [extensionInstalled, setExtensionInstalled] = useState<boolean | null>(
+    null,
+  );
 
   // Trigger background refresh via extension
   const triggerBackgroundRefresh = () => {
@@ -66,40 +98,51 @@ export default function LoginPage() {
     }
   };
 
-  // Check for existing login on mount
+  // Check for existing login on mount and detect extension
   useEffect(() => {
-    const existingUser = localStorage.getItem("esprit_user");
-    const existingData = localStorage.getItem("esprit_student_data");
+    const checkAuth = async () => {
+      // Check if extension is installed
+      const installed = await checkExtensionInstalled();
+      setExtensionInstalled(installed);
+      console.log("🔌 Extension installed:", installed);
 
-    if (existingUser && existingData) {
-      try {
-        const userData = JSON.parse(existingUser);
+      const existingUser = localStorage.getItem("esprit_user");
+      const existingData = localStorage.getItem("esprit_student_data");
 
-        if (userData.name) {
-          console.log("✅ User already logged in, redirecting to dashboard...");
+      if (existingUser && existingData) {
+        try {
+          const userData = JSON.parse(existingUser);
 
-          try {
-            const studentData = JSON.parse(existingData);
-            const lastFetched =
-              studentData.lastFetched || studentData.cacheTimestamp;
-            if (isDataStale(lastFetched)) {
-              console.log("📊 Data is stale, will refresh in background...");
-              triggerBackgroundRefresh();
+          if (userData.name) {
+            console.log(
+              "✅ User already logged in, redirecting to dashboard...",
+            );
+
+            try {
+              const studentData = JSON.parse(existingData);
+              const lastFetched =
+                studentData.lastFetched || studentData.cacheTimestamp;
+              if (isDataStale(lastFetched)) {
+                console.log("📊 Data is stale, will refresh in background...");
+                triggerBackgroundRefresh();
+              }
+            } catch {
+              // Ignore parse errors
             }
-          } catch {
-            // Ignore parse errors
-          }
 
-          router.replace("/dashboard");
-          return;
+            router.replace("/dashboard");
+            return;
+          }
+        } catch {
+          console.log("Invalid stored data, clearing...");
+          localStorage.removeItem("esprit_user");
+          localStorage.removeItem("esprit_student_data");
         }
-      } catch {
-        console.log("Invalid stored data, clearing...");
-        localStorage.removeItem("esprit_user");
-        localStorage.removeItem("esprit_student_data");
       }
-    }
-    setCheckingAuth(false);
+      setCheckingAuth(false);
+    };
+
+    checkAuth();
   }, [router]);
 
   // Show loading while checking auth
@@ -258,6 +301,27 @@ export default function LoginPage() {
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {extensionInstalled === false && (
+            <div className="bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 text-sm p-3 rounded-lg border border-yellow-500/20 flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+              <div>
+                <p className="font-medium">Extension not detected</p>
+                <p className="text-xs mt-1 opacity-80">
+                  Please install the ESPRIT@ds browser extension to use this
+                  portal.{" "}
+                  <a
+                    href="https://chromewebstore.google.com/detail/espritds/ecoohmcojdcogincjmomppjjhddlfcjj"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline hover:opacity-100"
+                  >
+                    Install Extension
+                  </a>
+                </p>
+              </div>
+            </div>
+          )}
+
           {error && (
             <div className="bg-destructive/10 text-destructive text-sm p-3 rounded-lg border border-destructive/20">
               {error}

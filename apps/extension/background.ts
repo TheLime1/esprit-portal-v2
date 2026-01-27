@@ -1110,6 +1110,12 @@ chrome.runtime.onMessageExternal.addListener(
   (request, sender, sendResponse) => {
     console.log("Message received from website:", request)
 
+    // Simple ping to check if extension is installed
+    if (request.action === "PING") {
+      safeSendResponse(sendResponse, { success: true, installed: true })
+      return true
+    }
+
     if (request.action === "LOGIN") {
       (async () => {
         try {
