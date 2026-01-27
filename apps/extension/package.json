@@ -45,7 +45,9 @@
       "matches": [
         "http://localhost:3000/*",
         "https://localhost:3000/*",
-        "https://esprit-portal-v2.vercel.app/*"
+        "https://esprit-portal-v2.vercel.app/*",
+        "https://portal.espritads.site/*",
+        "https://*.espritads.site/*"
       ]
     },
     "commands": {

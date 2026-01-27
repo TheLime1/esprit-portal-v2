@@ -22,33 +22,46 @@ function isDataStale(timestamp: string | undefined): boolean {
   return hoursDiff >= 4;
 }
 
-// Check if extension is installed
-async function checkExtensionInstalled(): Promise<boolean> {
-  const extensionId = "ecoohmcojdcogincjmomppjjhddlfcjj";
+// Extension IDs - production and common dev IDs
+const EXTENSION_IDS = [
+  "ecoohmcojdcogincjmomppjjhddlfcjj", // Production (Chrome Web Store)
+  // Add your dev extension ID here if different
+];
 
+// Check if extension is installed and return the working extension ID
+async function checkExtensionInstalled(): Promise<string | null> {
   if (typeof chrome === "undefined" || !chrome.runtime) {
-    return false;
+    return null;
   }
 
-  return new Promise((resolve) => {
-    try {
-      chrome.runtime.sendMessage(
-        extensionId,
-        { action: "PING" },
-        (response) => {
-          if (chrome.runtime.lastError) {
-            resolve(false);
-          } else {
-            resolve(true);
-          }
-        },
-      );
-      // Timeout after 2 seconds
-      setTimeout(() => resolve(false), 2000);
-    } catch {
-      resolve(false);
+  // Try each extension ID
+  for (const extensionId of EXTENSION_IDS) {
+    const result = await new Promise<boolean>((resolve) => {
+      try {
+        chrome.runtime.sendMessage(
+          extensionId,
+          { action: "PING" },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              resolve(false);
+            } else {
+              resolve(true);
+            }
+          },
+        );
+        // Timeout after 1 second per ID
+        setTimeout(() => resolve(false), 1000);
+      } catch {
+        resolve(false);
+      }
+    });
+
+    if (result) {
+      return extensionId;
     }
-  });
+  }
+
+  return null;
 }
 
 export default function LoginPage() {
@@ -58,6 +71,9 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [studentId, setStudentId] = useState("");
   const [password, setPassword] = useState("");
+  const [detectedExtensionId, setDetectedExtensionId] = useState<string | null>(
+    null,
+  );
   const [extensionInstalled, setExtensionInstalled] = useState<boolean | null>(
     null,
   );
@@ -101,10 +117,11 @@ export default function LoginPage() {
   // Check for existing login on mount and detect extension
   useEffect(() => {
     const checkAuth = async () => {
-      // Check if extension is installed
-      const installed = await checkExtensionInstalled();
-      setExtensionInstalled(installed);
-      console.log("🔌 Extension installed:", installed);
+      // Check if extension is installed and get the working ID
+      const foundExtensionId = await checkExtensionInstalled();
+      setDetectedExtensionId(foundExtensionId);
+      setExtensionInstalled(foundExtensionId !== null);
+      console.log("🔌 Extension detected:", foundExtensionId);
 
       const existingUser = localStorage.getItem("esprit_user");
       const existingData = localStorage.getItem("esprit_student_data");
@@ -169,8 +186,9 @@ export default function LoginPage() {
     setError(null);
 
     try {
-      // Hardcoded extension ID
-      const extensionId = "ecoohmcojdcogincjmomppjjhddlfcjj";
+      // Use detected extension ID or fallback to production
+      const extensionId =
+        detectedExtensionId || "ecoohmcojdcogincjmomppjjhddlfcjj";
 
       // Send message to extension
       if (typeof chrome !== "undefined" && chrome.runtime) {
